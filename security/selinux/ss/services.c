@@ -2563,8 +2563,7 @@ int security_fs_use(
 		}
 		*sid = c->sid[0];
 	} else {
-		rc = __security_genfs_sid(fstype, "/", SECCLASS_DIR,
-					sid);
+		rc = __security_genfs_sid(fstype, "/", SECCLASS_DIR, sid);
 		if (rc) {
 			*behavior = SECURITY_FS_USE_NONE;
 			rc = 0;
