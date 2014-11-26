@@ -581,6 +581,9 @@ static int camera_v4l2_open(struct file *filep)
 
 	if (!atomic_read(&pvdev->opened)) {
 
+		/* Disable power collapse latency */
+		msm_pm_qos_update_request(CAMERA_DISABLE_PC_LATENCY);
+
 		/* create a new session when first opened */
 		rc = msm_create_session(pvdev->vdev->num, pvdev->vdev);
 		if (rc < 0) {
@@ -605,6 +608,8 @@ static int camera_v4l2_open(struct file *filep)
 		    pr_err("%s : camera_check_event_status", __FUNCTION__);
 		    goto post_fail;
 		}
+		/* Enable power collapse latency */
+		msm_pm_qos_update_request(CAMERA_ENABLE_PC_LATENCY);
 	} else {
 		rc = msm_create_command_ack_q(pvdev->vdev->num,
 			atomic_read(&pvdev->opened));
