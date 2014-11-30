@@ -54,6 +54,9 @@ static struct work_struct input_boost_work;
 bool cpuboost_enable = true;
 module_param(cpuboost_enable, bool, 0644);
 
+bool cpuboost_enable = true;
+module_param(cpuboost_enable, bool, 0644);
+
 static unsigned int boost_ms;
 module_param(boost_ms, uint, 0644);
 
