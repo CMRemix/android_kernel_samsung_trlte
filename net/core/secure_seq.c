@@ -14,7 +14,7 @@ static u32 net_secret[MD5_MESSAGE_BYTES / 4] ____cacheline_aligned;
 
 void net_secret_init(void)
 {
-	get_random_bytes(net_secret, sizeof(net_secret));
+	prandom_bytes(net_secret, sizeof(net_secret));
 }
 
 #ifdef CONFIG_INET
