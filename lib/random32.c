@@ -141,7 +141,8 @@ void prandom_seed(u32 entropy)
 	 */
 	for_each_possible_cpu (i) {
 		struct rnd_state *state = &per_cpu(net_rand_state, i);
-		state->s1 = __seed(state->s1 ^ entropy, 1);
+		state->s1 = __seed(state->s1 ^ entropy, 2);
+		prandom_u32_state(state);
 	}
 }
 EXPORT_SYMBOL(prandom_seed);
@@ -158,9 +159,9 @@ static int __init prandom_init(void)
 		struct rnd_state *state = &per_cpu(net_rand_state,i);
 
 #define LCG(x)	((x) * 69069)	/* super-duper LCG */
-		state->s1 = __seed(LCG(i + jiffies), 1);
-		state->s2 = __seed(LCG(state->s1), 7);
-		state->s3 = __seed(LCG(state->s2), 15);
+		state->s1 = __seed(LCG(i + jiffies), 2);
+		state->s2 = __seed(LCG(state->s1), 8);
+		state->s3 = __seed(LCG(state->s2), 16);
 
 		/* "warm it up" */
 		prandom_u32_state(state);
@@ -173,6 +174,27 @@ static int __init prandom_init(void)
 	return 0;
 }
 core_initcall(prandom_init);
+
+static void __prandom_timer(unsigned long dontcare);
+static DEFINE_TIMER(seed_timer, __prandom_timer, 0, 0);
+
+static void __prandom_timer(unsigned long dontcare)
+{
+	u32 entropy;
+
+	get_random_bytes(&entropy, sizeof(entropy));
+	prandom_seed(entropy);
+	/* reseed every ~60 seconds, in [40 .. 80) interval with slack */
+	seed_timer.expires = jiffies + (40 * HZ + (prandom_u32() % (40 * HZ)));
+	add_timer(&seed_timer);
+}
+
+static void prandom_start_seed_timer(void)
+{
+	set_timer_slack(&seed_timer, HZ);
+	seed_timer.expires = jiffies + 40 * HZ;
+	add_timer(&seed_timer);
+}
 
 /*
  *	Generate better values after random number generator
@@ -187,13 +209,14 @@ static int __init prandom_reseed(void)
 		u32 seeds[3];
 
 		get_random_bytes(&seeds, sizeof(seeds));
-		state->s1 = __seed(seeds[0], 1);
-		state->s2 = __seed(seeds[1], 7);
-		state->s3 = __seed(seeds[2], 15);
+		state->s1 = __seed(seeds[0], 2);
+		state->s2 = __seed(seeds[1], 8);
+		state->s3 = __seed(seeds[2], 16);
 
 		/* mix it in */
 		prandom_u32_state(state);
 	}
+	prandom_start_seed_timer();
 	return 0;
 }
 late_initcall(prandom_reseed);
