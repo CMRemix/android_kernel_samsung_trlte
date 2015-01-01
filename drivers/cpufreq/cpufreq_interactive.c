@@ -40,7 +40,7 @@
 #define CONFIG_MODE_AUTO_CHANGE_BOOST
 
 static int active_count;
-extern bool mdss_screen_on;
+bool cpufreq_screen_on = true;
 
 struct cpufreq_interactive_cpuinfo {
 	struct timer_list cpu_timer;
@@ -860,7 +860,7 @@ static int cpufreq_interactive_speedchange_task(void *data)
 					max_freq = pjcpu->target_freq;
 			}
 
-			if (unlikely(!mdss_screen_on))
+			if (unlikely(!cpufreq_screen_on))
 				if (max_freq > screen_off_max) max_freq = screen_off_max;
 
 			if (max_freq != pcpu->policy->cur)
@@ -1939,7 +1939,7 @@ static int __init cpufreq_interactive_init(void)
 	struct cpufreq_interactive_cpuinfo *pcpu;
 	struct sched_param param = { .sched_priority = MAX_RT_PRIO-1 };
 
-	mdss_screen_on = true;
+	cpufreq_screen_on = true;
 	/* Initalize per-cpu timers */
 	for_each_possible_cpu(i) {
 		pcpu = &per_cpu(cpuinfo, i);
