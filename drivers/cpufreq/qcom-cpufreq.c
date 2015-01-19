@@ -34,6 +34,9 @@
 #include <soc/qcom/cpufreq.h>
 #include <trace/events/power.h>
 #include <mach/msm_bus.h>
+#ifdef CONFIG_HAS_EARLYSUSPEND
+#include <linux/earlysuspend.h>
+#endif
 
 #ifdef CONFIG_DEBUG_FS
 #include <linux/debugfs.h>
