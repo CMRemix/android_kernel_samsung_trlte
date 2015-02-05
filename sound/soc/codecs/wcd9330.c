@@ -35,11 +35,15 @@
 #include <linux/pm_runtime.h>
 #include <linux/kernel.h>
 #include <linux/gpio.h>
+#include <linux/moduleparam.h>
 #include "wcd9330.h"
 #include "wcd9xxx-resmgr.h"
 #include "wcd9xxx-common.h"
 #include "wcdcal-hwdep.h"
 #include "wcd_cpe_core.h"
+
+static bool enable_fs = false;
+module_param(enable_fs, bool, 0644);
 
 #if defined(CONFIG_SND_SOC_ES705)
 #include "audience/es705-export.h"
@@ -4828,6 +4832,7 @@ int tomtom_write(struct snd_soc_codec *codec, unsigned int reg,
  reg, ret);
  }
 #ifdef CONFIG_SOUND_CONTROL_HAX_3_GPL
+	if (enable_fs) {
 	if (!snd_hax_reg_access(reg)) {
 		if (!((val = snd_hax_cache_read(reg)) != -1)) {
 			val = wcd9xxx_reg_read_safe(&wcd9xxx->core_res, reg);
@@ -4836,6 +4841,7 @@ int tomtom_write(struct snd_soc_codec *codec, unsigned int reg,
 		snd_hax_cache_write(reg, value);
 		val = value;
 	}
+	} else val = value;
 	return wcd9xxx_reg_write(&wcd9xxx->core_res, reg, val);
 #else
 	return wcd9xxx_reg_write(&wcd9xxx->core_res, reg, value);
