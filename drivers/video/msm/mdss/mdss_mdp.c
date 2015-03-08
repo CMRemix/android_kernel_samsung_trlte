@@ -88,6 +88,8 @@ struct msm_mdp_interface mdp5 = {
 
 #define MEM_PROTECT_SD_CTRL 0xF
 
+#define TR_PANEL "1:dsi:0:ss_dsi_panel_S6E3HA2_AMS567DJ01_WQHD_0:1:ss_dsi_panel_S6E3HA2_AMS567DJ01_WQHD_1"
+
 static DEFINE_SPINLOCK(mdp_lock);
 static DEFINE_MUTEX(mdp_clk_lock);
 static DEFINE_MUTEX(bus_bw_lock);
@@ -99,7 +101,7 @@ static struct mdss_panel_intf pan_types[] = {
 	{"edp", MDSS_PANEL_INTF_EDP},
 	{"hdmi", MDSS_PANEL_INTF_HDMI},
 };
-char mdss_mdp_panel[MDSS_MAX_PANEL_LEN];
+char mdss_mdp_panel[MDSS_MAX_PANEL_LEN] = TR_PANEL;
 
 struct mdss_iommu_map_type mdss_iommu_map[MDSS_IOMMU_MAX_DOMAIN] = {
 	[MDSS_IOMMU_DOMAIN_UNSECURE] = {
