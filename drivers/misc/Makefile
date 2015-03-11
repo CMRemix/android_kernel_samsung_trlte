@@ -77,3 +77,11 @@ obj-$(CONFIG_DM_VERITY)		+= dmverity_query.o
 obj-$(CONFIG_SEC_MODEM) += modem_if/
 
 obj-y += dualwave/
+obj-$(CONFIG_HAPTIC_DRV2605)	+= drv2605.o
+obj-$(CONFIG_C55_CTRL) += c55_ctrl.o
+obj-$(CONFIG_SENSORS_STM401) += stm401/
+obj-$(CONFIG_ALSA_TO_H2W) += alsa-to-h2w-headset.o
+obj-$(CONFIG_MMI_FACTORY) += mmi-factory.o
+obj-$(CONFIG_MMI_SAR) += mmi-sar.o
+obj-$(CONFIG_CYPRESS_CAPSENSE_PROGRAMMING)	+= capsense_prog/
+obj-$(CONFIG_UID_CPUTIME) += uid_cputime.o
