@@ -752,6 +752,7 @@ static int mdss_mdp_cmd_wait4pingpong(struct mdss_mdp_ctl *ctl, void *arg)
 			WARN(1, "cmd kickoff timed out (%d) ctl=%d\n",
 					rc, ctl->num);
 			MDSS_XLOG_TOUT_HANDLER("mdp", "dsi0", "dsi1", "panic");
+			mdss_fb_send_panel_reset_event(ctl->mfd);
 #if defined (CONFIG_FB_MSM_MDSS_DSI_DBG)
 			mdss_dsi_debug_check_te(pdata);
 			dumpreg();
