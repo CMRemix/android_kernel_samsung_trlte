@@ -179,9 +179,9 @@ static struct dsi_cmd panel_osc_type_read_cmds;
 extern int te_set_done;
 #endif
 
-+#ifdef CONFIG_TOUCHSCREEN_SWEEP2WAKE
-+#include <linux/input/sweep2wake.h>
-+#endif
+#ifdef CONFIG_TOUCHSCREEN_SWEEP2WAKE
+#include <linux/input/sweep2wake.h>
+#endif
 static struct mipi_samsung_driver_data msd;
 /*List of supported Panels with HW revision detail
  * (one structure per project)
