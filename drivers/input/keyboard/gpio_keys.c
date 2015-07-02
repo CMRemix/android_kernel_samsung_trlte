@@ -1238,6 +1238,7 @@ static int __init gpio_keys_init(void)
 
 static void __exit gpio_keys_exit(void)
 {
+	register_power_suspend(&gpio_suspend);
 	platform_driver_unregister(&gpio_keys_device_driver);
 }
 

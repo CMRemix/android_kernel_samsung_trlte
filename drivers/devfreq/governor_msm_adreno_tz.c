@@ -62,6 +62,9 @@ static DEFINE_SPINLOCK(tz_lock);
 /* Boolean to detect if pm has entered suspend mode */
 static bool suspended = false;
 
+/* Boolean to detect if panel has gone off */
+static bool power_suspended = false;
+
 /* Trap into the TrustZone, and call funcs there. */
 static int __secure_tz_entry2(u32 cmd, u32 val1, u32 val2)
 {
@@ -417,8 +420,26 @@ static struct devfreq_governor msm_adreno_tz = {
 	.event_handler = tz_handler,
 };
 
+static void tz_early_suspend(struct power_suspend *handler)
+{
+	power_suspended = true;
+	return;
+}
+
+static void tz_late_resume(struct power_suspend *handler)
+{
+	power_suspended = false;
+	return;
+}
+
+static struct power_suspend tz_power_suspend = {
+	.suspend = tz_early_suspend,
+	.resume = tz_late_resume,
+};
+
 static int __init msm_adreno_tz_init(void)
 {
+	register_power_suspend(&tz_power_suspend);
 	return devfreq_add_governor(&msm_adreno_tz);
 }
 subsys_initcall(msm_adreno_tz_init);
