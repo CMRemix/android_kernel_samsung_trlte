@@ -25,6 +25,9 @@
 #include <linux/slab.h>
 #include <linux/input.h>
 #include <linux/time.h>
+#ifdef CONFIG_CPUFREQ_HARDLIMIT
+#include <linux/cpufreq_hardlimit.h>
+#endif
 
 struct cpu_sync {
 	struct task_struct *thread;
@@ -51,6 +54,9 @@ static DEFINE_PER_CPU(struct cpu_sync, sync_info);
 static struct workqueue_struct *cpu_boost_wq;
 
 static struct work_struct input_boost_work;
+
+bool cpuboost_enable = true;
+module_param(cpuboost_enable, bool, 0644);
 
 static unsigned int boost_ms;
 module_param(boost_ms, uint, 0644);
@@ -93,6 +99,8 @@ static int boost_adjust_notify(struct notifier_block *nb, unsigned long val,
 	unsigned int b_min = s->boost_min;
 	unsigned int ib_min = s->input_boost_min;
 	unsigned int min;
+
+	if (!cpuboost_enable) return NOTIFY_OK;
 
 	switch (val) {
 	case CPUFREQ_ADJUST:
@@ -155,6 +163,8 @@ static int boost_mig_sync_thread(void *data)
 	unsigned long flags;
 	unsigned int req_freq;
 
+	if (!cpuboost_enable) return 0;
+
 	while (1) {
 		wait_event(s->sync_wq, s->pending || kthread_should_stop());
 #ifdef CONFIG_IRLED_GPIO
@@ -181,6 +191,9 @@ static int boost_mig_sync_thread(void *data)
 		if (ret)
 			continue;
 
+		if (s->task_load < migration_load_threshold)
+			continue;
+
 		req_freq = load_based_syncs ?
 			(dest_policy.max * s->task_load) / 100 : src_policy.cur;
 
@@ -194,7 +207,11 @@ static int boost_mig_sync_thread(void *data)
 
 		cancel_delayed_work_sync(&s->boost_rem);
 
+#ifdef CONFIG_CPUFREQ_HARDLIMIT
+        s->boost_min = check_cpufreq_hardlimit(req_freq);
+#else
 		s->boost_min = req_freq;
+#endif
 
 		/* Force policy re-evaluation to trigger adjust notifier. */
 		get_online_cpus();
@@ -236,6 +253,7 @@ static int boost_migration_notify(struct notifier_block *nb,
 		return NOTIFY_OK;
 	}
 #endif
+	if (!cpuboost_enable) return NOTIFY_OK;
 
 	if (load_based_syncs && (mnd->load <= migration_load_threshold))
 		return NOTIFY_OK;
@@ -259,7 +277,7 @@ static int boost_migration_notify(struct notifier_block *nb,
 	spin_lock_irqsave(&s->lock, flags);
 	s->pending = true;
 	s->src_cpu = mnd->src_cpu;
-	s->task_load = load_based_syncs ? mnd->load : 0;
+	s->task_load = mnd->load;
 	spin_unlock_irqrestore(&s->lock, flags);
 	wake_up(&s->sync_wq);
 
@@ -275,6 +293,8 @@ static void do_input_boost(struct work_struct *work)
 	unsigned int i, ret;
 	struct cpu_sync *i_sync_info;
 	struct cpufreq_policy policy;
+
+	if (!cpuboost_enable) return;
 
 	get_online_cpus();
 	for_each_online_cpu(i) {
@@ -300,6 +320,8 @@ static void cpuboost_input_event(struct input_handle *handle,
 		unsigned int type, unsigned int code, int value)
 {
 	u64 now;
+
+	if (!cpuboost_enable) return;
 
 	if (!input_boost_freq)
 		return;
