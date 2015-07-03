@@ -21,7 +21,6 @@
 #include <linux/gpio.h>
 #include <linux/err.h>
 #include <linux/regulator/consumer.h>
-#include <linux/lcd_notify.h>
 
 #ifdef CONFIG_STATE_NOTIFIER
 #include <linux/state_notifier.h>
@@ -1012,7 +1011,6 @@ static int mdss_dsi_event_handler(struct mdss_panel_data *pdata,
 	case MDSS_EVENT_UNBLANK:
 //		pr_info("%s : MDSS_EVENT_UNBLANK \n", __func__);
 		pr_info("%s :(%d) MDSS_EVENT_UNBLANK (%s)\n", __func__, ctrl_pdata->ndx, ctrl_pdata->on_cmds.link_state? "HS" : "LP");
-		lcd_notifier_call_chain(LCD_EVENT_ON_START, NULL);
 		rc = mdss_dsi_on(pdata);
 		mdss_dsi_op_mode_config(pdata->panel_info.mipi.mode,
 							pdata);
@@ -1025,7 +1023,6 @@ static int mdss_dsi_event_handler(struct mdss_panel_data *pdata,
 		ctrl_pdata->ctrl_state |= CTRL_STATE_MDP_ACTIVE;
 		if (ctrl_pdata->on_cmds.link_state == DSI_HS_MODE)
 			rc = mdss_dsi_unblank(pdata);
-		lcd_notifier_call_chain(LCD_EVENT_ON_END, NULL);
 #ifdef CONFIG_STATE_NOTIFIER
 		if (!use_fb_notifier)
 			state_notifier_call_chain(STATE_NOTIFIER_ACTIVE, NULL);
@@ -1036,7 +1033,6 @@ static int mdss_dsi_event_handler(struct mdss_panel_data *pdata,
 		power_state = (int) (unsigned long) arg;
 		if (ctrl_pdata->off_cmds.link_state == DSI_HS_MODE)
 			rc = mdss_dsi_blank(pdata, power_state);
-		lcd_notifier_call_chain(LCD_EVENT_OFF_START, NULL);
 		break;
 	case MDSS_EVENT_PANEL_OFF:
 		pr_info("%s :(%d) MDSS_EVENT_PANEL_OFF (%s) \n", __func__, ctrl_pdata->ndx, ctrl_pdata->off_cmds.link_state? "HS" : "LP");
@@ -1045,7 +1041,6 @@ static int mdss_dsi_event_handler(struct mdss_panel_data *pdata,
 		if (ctrl_pdata->off_cmds.link_state == DSI_LP_MODE)
 			rc = mdss_dsi_blank(pdata, power_state);
 		rc = mdss_dsi_off(pdata, power_state);
-		lcd_notifier_call_chain(LCD_EVENT_OFF_END, NULL);
 #ifdef CONFIG_STATE_NOTIFIER
 		if (!use_fb_notifier)
 			state_notifier_call_chain(STATE_NOTIFIER_SUSPEND, NULL);
