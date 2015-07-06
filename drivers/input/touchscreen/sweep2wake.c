@@ -190,9 +190,9 @@ static void detect_sweep2wake(int sweep_coord, int sweep_height, bool st)
                 }
             }
         }
-        if (scr_suspended == false) {
+        if (scr_suspended == true) {
             /* s2s: left->right */
-            scr_on_touch = true;
+            scr_on_touch = false;
             reverse_prev_coord = DEFAULT_S2W_X_B0;
             reverse_next_coord = DEFAULT_S2W_X_B3;
             if ((reverse_barrier[0] == true) ||
@@ -214,7 +214,7 @@ static void detect_sweep2wake(int sweep_coord, int sweep_height, bool st)
                             DEFAULT_S2W_Y_LIMIT)) {
                         if (sweep_coord > DEFAULT_S2W_X_B5) {
                             if (exec_count) {
-                                pr_info(LOGTAG"OFF\n");
+                                pr_info(LOGTAG"ON\n");
                                 sweep2wake_pwrswitch();
                                 exec_count = false;
                             }
