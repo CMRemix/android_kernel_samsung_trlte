@@ -179,9 +179,7 @@ static struct dsi_cmd panel_osc_type_read_cmds;
 extern int te_set_done;
 #endif
 
-#ifdef CONFIG_TOUCHSCREEN_SWEEP2WAKE
-#include <linux/input/sweep2wake.h>
-#endif
+
 static struct mipi_samsung_driver_data msd;
 /*List of supported Panels with HW revision detail
  * (one structure per project)
@@ -570,8 +568,7 @@ void mdss_dsi_samsung_panel_reset(struct mdss_panel_data *pdata, int enable)
 		wmb();
 
 	} else {
-		if (!s2w_switch)
-			gpio_set_value((ctrl_pdata->rst_gpio), 0);
+		gpio_set_value((ctrl_pdata->rst_gpio), 0);
 
 	}
 }
