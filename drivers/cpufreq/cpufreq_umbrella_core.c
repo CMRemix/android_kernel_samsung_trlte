@@ -2057,11 +2057,11 @@ static int __init cpufreq_umbrella_core_init(void)
 static void mode_auto_change_boost(struct work_struct *work)
 {
 	if(mode_count == 1) {
-		request_bimc_clk(bimc_hispeed_freq);
+	//	request_bimc_clk(bimc_hispeed_freq);
 		msm_pm_retention_mode_enable(0);
 	}
 	else if(mode_count == 0) {
-		request_bimc_clk(0);
+	//	request_bimc_clk(0);
 		msm_pm_retention_mode_enable(1);
 	}
 }

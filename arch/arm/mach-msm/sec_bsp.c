@@ -24,8 +24,6 @@
 #include <linux/sec_class.h>
 #include <soc/qcom/boot_stats.h>
 
-#include <linux/clk.h>
-static atomic_t bimc_lock_count = ATOMIC_INIT(0);
 
 struct boot_event {
 	unsigned int type;
@@ -161,36 +159,5 @@ static int __init sec_bsp_init(void)
 	return 0;
 }
 
-int request_bimc_clk(unsigned long request_clk)
-{
-	int ret = 0;
-	struct clk * clk;
-	clk = clk_get_sys("sec_bsp", "bimc_a_clk");
-	if (IS_ERR(clk)) {
-		pr_err("%s: no such clock\n",__func__);
-		return -EINVAL;
-	}
-
-	ret = atomic_read(&bimc_lock_count);
-	if (request_clk && ret) {
-		pr_err("%s: error bimc_lock_count locked\n",__func__);
-		return -EINVAL;
-	} else if (!request_clk && !ret) {
-		pr_err("%s: error bimc_lock_count unlocked\n",__func__);
-		return -EINVAL;
-	}
-
-	if (request_clk) {
-		atomic_inc(&bimc_lock_count);
-		clk_set_rate(clk, request_clk*1000);
-		clk_prepare_enable(clk);
-		pr_info("MINSET: BIMC %lu Khz MIN\n", request_clk);
-	} else {
-		atomic_dec(&bimc_lock_count);
-		clk_disable_unprepare(clk);
-		pr_info("MINCLR: BIMC MIN CLR\n");
-	}
-	return 0;
-}
 
 module_init(sec_bsp_init);

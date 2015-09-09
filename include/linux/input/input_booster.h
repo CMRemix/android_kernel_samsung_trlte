@@ -17,34 +17,12 @@ enum input_booster_id {
 #define DVFS_STAGE_PENTA	1 << 5	// 0000 0000 0010 0000
 #define DVFS_STAGE_NINTH	1 << 9	// 0000 0010 0000 0000
 
-/* Set DVFS STAGE for each model */
-/* TSP BOOSTER */
-#if defined(CONFIG_SEC_LENTIS_PROJECT) || defined(CONFIG_SEC_TRLTE_PROJECT) ||\
-	defined(CONFIG_SEC_KCCAT6_PROJECT) || defined(CONFIG_SEC_TBLTE_PROJECT)
 #define DVFS_TSP_STAGE		(DVFS_STAGE_NONE | DVFS_STAGE_SINGLE |\
-				DVFS_STAGE_DUAL | DVFS_STAGE_TRIPLE |\
-				DVFS_STAGE_PENTA | DVFS_STAGE_NINTH)
-#endif
-
-/* TKEY BOOSTER */
-#if defined(CONFIG_SEC_LENTIS_PROJECT) || defined(CONFIG_SEC_TRLTE_PROJECT) ||\
-	defined(CONFIG_SEC_KCCAT6_PROJECT)
-#define DVFS_TKEY_STAGE	(DVFS_STAGE_NONE | DVFS_STAGE_SINGLE |\
 				DVFS_STAGE_DUAL)
-#endif
-
-/* WACOM BOOSTER */
-#if defined(CONFIG_SEC_TRLTE_PROJECT) || defined(CONFIG_SEC_TBLTE_PROJECT)
-#define DVFS_WACOM_STAGE	(DVFS_STAGE_NONE | DVFS_STAGE_SINGLE |\
-				DVFS_STAGE_DUAL | DVFS_STAGE_TRIPLE)
-#endif
-
-/* BIMC MINLOCK */
-#if defined(CONFIG_SEC_TRLTE_PROJECT) || defined(CONFIG_SEC_TBLTE_PROJECT)
-#define INPUT_BIMC_MINLOCK	1
-#else
-#define INPUT_BIMC_MINLOCK	0
-#endif
+#define DVFS_TKEY_STAGE		(DVFS_STAGE_NONE | DVFS_STAGE_SINGLE |\
+				DVFS_STAGE_DUAL)
+#define DVFS_WACOM_STAGE		(DVFS_STAGE_NONE | DVFS_STAGE_SINGLE |\
+				DVFS_STAGE_DUAL)
 
 #ifndef DVFS_TSP_STAGE
 #define DVFS_TSP_STAGE		0
@@ -59,20 +37,6 @@ enum input_booster_id {
 #if DVFS_TSP_STAGE
 #define TSP_BOOSTER
 #endif
-#if DVFS_TKEY_STAGE
-#define TKEY_BOOSTER
-#endif
-#if DVFS_WACOM_STAGE
-#define WACOM_BOOSTER
-#endif
-
-#if INPUT_BIMC_MINLOCK
-#define INPUT_BIMC_LIMIT			384000
-#define INPUT_BIMC_SECOND_LIMIT			384000
-#define INPUT_BIMC_HIGH_LIMIT			384000
-#define INPUT_BIMC_LOW_LIMIT			384000
-#endif
-
 /* TSP */
 #define INPUT_BOOSTER_OFF_TIME_TSP		500
 #define INPUT_BOOSTER_CHG_TIME_TSP		130
@@ -91,19 +55,15 @@ struct input_booster {
 	struct delayed_work	work_dvfs_off;
 	struct delayed_work	work_dvfs_chg;
 	struct mutex		dvfs_lock;
-
 	bool dvfs_lock_status;
 	int dvfs_old_stauts;
 	int dvfs_boost_mode;
 	int dvfs_freq;
 	int dvfs_id;
 	int dvfs_stage;
-
 	int (*dvfs_off)(struct input_booster *);
 	void (*dvfs_set)(struct input_booster *, int);
 };
-
 void input_booster_init_dvfs(struct input_booster *booster, int id);
-extern int request_bimc_clk(unsigned long request_clk);
 
 #endif /* _INPUT_BOOSTER_H_ */
