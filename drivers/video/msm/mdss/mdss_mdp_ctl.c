@@ -3179,19 +3179,20 @@ int mdss_mdp_display_commit(struct mdss_mdp_ctl *ctl, void *arg,
 	ctl->flush_bits = 0;
 #if defined(CONFIG_FB_MSM_MDSS_SAMSUNG)
 	if (mdp5_data) {
-		mutex_lock(&mdp5_data->list_lock);
-		if (csc_change == 1) {
-			struct mdss_mdp_pipe *pipe, *next;
-			list_for_each_entry_safe(pipe, next, &mdp5_data->pipes_used, list) {
-				if (pipe->type == MDSS_MDP_PIPE_TYPE_VIG) {
-					pr_info(" mdss_mdp_csc_setup start\n");
-					mdss_mdp_csc_setup(MDSS_MDP_BLOCK_SSPP, pipe->num,1,
-									MDSS_MDP_CSC_YUV2RGB);
-					csc_change = 0;
+		if (mutex_trylock(&mdp5_data->list_lock)){
+			if (csc_change == 1) {
+				struct mdss_mdp_pipe *pipe, *next;
+				list_for_each_entry_safe(pipe, next, &mdp5_data->pipes_used, list) {
+					if (pipe->type == MDSS_MDP_PIPE_TYPE_VIG) {
+						pr_info(" mdss_mdp_csc_setup start\n");
+						mdss_mdp_csc_setup(MDSS_MDP_BLOCK_SSPP, pipe->num,1,
+										MDSS_MDP_CSC_YUV2RGB);
+						csc_change = 0;
+					}
 				}
 			}
+			mutex_unlock(&mdp5_data->list_lock);
 		}
-		mutex_unlock(&mdp5_data->list_lock);
 	}
 #endif
 

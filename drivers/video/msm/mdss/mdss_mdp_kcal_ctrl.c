@@ -134,19 +134,23 @@ static uint32_t igc_rgb[IGC_LUT_ENTRIES] = {
 
 static int mdss_mdp_kcal_display_commit(void)
 {
-	int i;
 	int ret = 0;
 	struct mdss_mdp_ctl *ctl;
 	struct mdss_data_type *mdata = mdss_mdp_get_mdata();
 
-	for (i = 0; i < mdata->nctl; i++) {
-		ctl = mdata->ctl_off + i;
-		/* pp setup requires mfd */
-		if ((mdss_mdp_ctl_is_power_on(ctl)) && (ctl->mfd)) {
-			ret = mdss_mdp_pp_setup(ctl);
-			if (ret)
-				pr_err("%s: setup failed: %d\n", __func__, ret);
-		}
+	ctl = mdata->ctl_off;
+	
+	/* commit/pp setup requires mfd */
+	if ((mdss_mdp_ctl_is_power_on(ctl)) && (ctl->mfd)) {
+#if defined(CONFIG_FB_MSM_MDSS_SAMSUNG)
+		mdss_mdp_display_wait4comp(ctl);
+		ret = mdss_mdp_display_commit(ctl, NULL, NULL);
+		mdss_mdp_display_wait4comp(ctl);
+#else
+		ret = mdss_mdp_pp_setup(ctl);
+#endif
+		if (ret)
+			pr_err("%s: commit failed: %d\n", __func__, ret);
 	}
 
 	return ret;
