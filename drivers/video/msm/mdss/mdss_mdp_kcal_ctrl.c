@@ -24,11 +24,9 @@
 
 #include "mdss_mdp.h"
 
+static unsigned int commit_wait = 3;
 static int ctr_commits = 0;
 bool flg_kcal_needs_write = false;
-
-static struct workqueue_struct *wq_kcal;
-struct work_struct work_kcal_commit;
 
 #define DEF_PCC 0x100
 #define DEF_PA 0xff
@@ -139,93 +137,87 @@ static uint32_t igc_rgb[IGC_LUT_ENTRIES] = {
 	48, 32, 16, 0
 };
 
-static void kcal_commit_work(struct work_struct * work)
+static int mdss_mdp_kcal_display_commit(void)
 {
+	int ret = 0;
 	struct mdss_mdp_ctl *ctl;
 	struct mdss_data_type *mdata = mdss_mdp_get_mdata();
-
-	// give a commit a chance to happen, so we don't have to force one (which might cause tearing).
-	msleep(2);
-
-	// so did any happen yet?
+	
+	ctr_commits++;
+	
+	// for some reason it crashes immediately upon starting to boot,
+	// so be lazy and just block it once.
+	if (ctr_commits < 2)
+		return 1;
+	
+	// don't force a commit if it has already done one.
 	if (!flg_kcal_needs_write)
-		return;
-
+		return ret;
+	
 	ctl = mdata->ctl_off;
 	
 	/* commit/pp setup requires mfd */
 	if ((mdss_mdp_ctl_is_power_on(ctl)) && (ctl->mfd)) {
 #if defined(CONFIG_FB_MSM_MDSS_SAMSUNG)
 		mdss_mdp_display_wait4comp(ctl);
-		mdss_mdp_display_commit(ctl, NULL, NULL);
+		ret = mdss_mdp_display_commit(ctl, NULL, NULL);
 		mdss_mdp_display_wait4comp(ctl);
 #else
-		mdss_mdp_pp_setup(ctl);
+		ret = mdss_mdp_pp_setup(ctl);
 #endif
+		if (ret)
+			pr_err("%s: commit failed: %d\n", __func__, ret);
 	}
-}
-
-static int mdss_mdp_kcal_display_commit(void)
-{
-	ctr_commits++;
-
-	// for some reason it crashes immediately upon starting to boot,
-	// so be lazy and just block it once.
-	if (ctr_commits < 2)
-		return 1;
-
-	if (!work_busy(&work_kcal_commit)) {
-		queue_work_on(0, wq_kcal, &work_kcal_commit);
-		return 0;
-	} else
-		return 1;
+	
+	return ret;
 }
 
 static void mdss_mdp_kcal_update_pcc(struct kcal_lut_data *lut_data)
 {
 	u32 copyback = 0;
 	struct mdp_pcc_cfg_data pcc_config;
-
+	
 	memset(&pcc_config, 0, sizeof(struct mdp_pcc_cfg_data));
-
+	
 	lut_data->red = lut_data->red < lut_data->minimum ?
-		lut_data->minimum : lut_data->red;
+	lut_data->minimum : lut_data->red;
 	lut_data->green = lut_data->green < lut_data->minimum ?
-		lut_data->minimum : lut_data->green;
+	lut_data->minimum : lut_data->green;
 	lut_data->blue = lut_data->blue < lut_data->minimum ?
-		lut_data->minimum : lut_data->blue;
-
+	lut_data->minimum : lut_data->blue;
+	
 	pcc_config.block = MDP_LOGICAL_BLOCK_DISP_0;
 	pcc_config.ops = lut_data->enable ?
-		MDP_PP_OPS_WRITE | MDP_PP_OPS_ENABLE :
-			MDP_PP_OPS_WRITE | MDP_PP_OPS_DISABLE;
+	MDP_PP_OPS_WRITE | MDP_PP_OPS_ENABLE :
+	MDP_PP_OPS_WRITE | MDP_PP_OPS_DISABLE;
 	pcc_config.r.r = lut_data->red * PCC_ADJ;
 	pcc_config.g.g = lut_data->green * PCC_ADJ;
 	pcc_config.b.b = lut_data->blue * PCC_ADJ;
-
+	
 	mdss_mdp_pcc_config(&pcc_config, &copyback);
-	if (!work_busy(&work_kcal_commit))
-		flg_kcal_needs_write = true;
+	
+	flg_kcal_needs_write = true;
+	msleep(commit_wait);
 }
 
 static void mdss_mdp_kcal_read_pcc(struct kcal_lut_data *lut_data)
 {
 	u32 copyback = 0;
 	struct mdp_pcc_cfg_data pcc_config;
-
+	
 	memset(&pcc_config, 0, sizeof(struct mdp_pcc_cfg_data));
-
+	
 	pcc_config.block = MDP_LOGICAL_BLOCK_DISP_0;
 	pcc_config.ops = MDP_PP_OPS_READ;
-
+	
 	mdss_mdp_pcc_config(&pcc_config, &copyback);
-
+	
 	/* LiveDisplay disables pcc when using default values and regs
 	 * are zeroed on pp resume, so throw these values out.
 	 */
 	if (!pcc_config.r.r && !pcc_config.g.g && !pcc_config.b.b)
 		return;
-
+	
 	lut_data->red = pcc_config.r.r / PCC_ADJ;
 	lut_data->green = pcc_config.g.g / PCC_ADJ;
 	lut_data->blue = pcc_config.b.b / PCC_ADJ;
@@ -237,27 +229,27 @@ static void mdss_mdp_kcal_update_pa(struct kcal_lut_data *lut_data)
 	struct mdp_pa_cfg_data pa_config;
 	struct mdp_pa_v2_cfg_data pa_v2_config;
 	struct mdss_data_type *mdata = mdss_mdp_get_mdata();
-
+	
 	if (mdata->mdp_rev < MDSS_MDP_HW_REV_103) {
 		memset(&pa_config, 0, sizeof(struct mdp_pa_cfg_data));
-
+		
 		pa_config.block = MDP_LOGICAL_BLOCK_DISP_0;
 		pa_config.pa_data.flags = lut_data->enable ?
-			MDP_PP_OPS_WRITE | MDP_PP_OPS_ENABLE :
-				MDP_PP_OPS_WRITE | MDP_PP_OPS_DISABLE;
+		MDP_PP_OPS_WRITE | MDP_PP_OPS_ENABLE :
+		MDP_PP_OPS_WRITE | MDP_PP_OPS_DISABLE;
 		pa_config.pa_data.hue_adj = lut_data->hue;
 		pa_config.pa_data.sat_adj = lut_data->sat;
 		pa_config.pa_data.val_adj = lut_data->val;
 		pa_config.pa_data.cont_adj = lut_data->cont;
-
+		
 		mdss_mdp_pa_config(&pa_config, &copyback);
 	} else {
 		memset(&pa_v2_config, 0, sizeof(struct mdp_pa_v2_cfg_data));
-
+		
 		pa_v2_config.block = MDP_LOGICAL_BLOCK_DISP_0;
 		pa_v2_config.pa_v2_data.flags = lut_data->enable ?
-			MDP_PP_OPS_WRITE | MDP_PP_OPS_ENABLE :
-				MDP_PP_OPS_WRITE | MDP_PP_OPS_DISABLE;
+		MDP_PP_OPS_WRITE | MDP_PP_OPS_ENABLE :
+		MDP_PP_OPS_WRITE | MDP_PP_OPS_DISABLE;
 		pa_v2_config.pa_v2_data.flags |= MDP_PP_PA_HUE_ENABLE;
 		pa_v2_config.pa_v2_data.flags |= MDP_PP_PA_HUE_MASK;
 		pa_v2_config.pa_v2_data.flags |= MDP_PP_PA_SAT_ENABLE;
@@ -270,277 +262,302 @@ static void mdss_mdp_kcal_update_pa(struct kcal_lut_data *lut_data)
 		pa_v2_config.pa_v2_data.global_sat_adj = lut_data->sat;
 		pa_v2_config.pa_v2_data.global_val_adj = lut_data->val;
 		pa_v2_config.pa_v2_data.global_cont_adj = lut_data->cont;
-
+		
 		mdss_mdp_pa_v2_config(&pa_v2_config, &copyback);
 	}
-	if (!work_busy(&work_kcal_commit))
-		flg_kcal_needs_write = true;
+
+	flg_kcal_needs_write = true;
+	msleep(commit_wait);
 }
 
 static void mdss_mdp_kcal_update_igc(struct kcal_lut_data *lut_data)
 {
 	u32 copyback = 0, copy_from_kernel = 1;
 	struct mdp_igc_lut_data igc_config;
-
+	
 	memset(&igc_config, 0, sizeof(struct mdp_igc_lut_data));
-
+	
 	igc_config.block = MDP_LOGICAL_BLOCK_DISP_0;
 	igc_config.ops = lut_data->invert && lut_data->enable ?
-		MDP_PP_OPS_WRITE | MDP_PP_OPS_ENABLE :
-			MDP_PP_OPS_WRITE | MDP_PP_OPS_DISABLE;
+	MDP_PP_OPS_WRITE | MDP_PP_OPS_ENABLE :
+	MDP_PP_OPS_WRITE | MDP_PP_OPS_DISABLE;
 	igc_config.len = IGC_LUT_ENTRIES;
 	igc_config.c0_c1_data = igc_inverted;
 	igc_config.c2_data = igc_rgb;
-
+	
 	mdss_mdp_igc_lut_config(&igc_config, &copyback, copy_from_kernel);
-	if (!work_busy(&work_kcal_commit))
-		flg_kcal_needs_write = true;
+	
+	flg_kcal_needs_write = true;
+	msleep(commit_wait);
 }
 
 static ssize_t kcal_store(struct device *dev, struct device_attribute *attr,
-						const char *buf, size_t count)
+						  const char *buf, size_t count)
 {
 	int kcal_r, kcal_g, kcal_b, r;
 	struct kcal_lut_data *lut_data = dev_get_drvdata(dev);
-
+	
 	r = sscanf(buf, "%d %d %d", &kcal_r, &kcal_g, &kcal_b);
 	if ((r != 3) || (kcal_r < 1 || kcal_r > 256) ||
 		(kcal_g < 1 || kcal_g > 256) || (kcal_b < 1 || kcal_b > 256))
 		return -EINVAL;
-
+	
 	lut_data->red = kcal_r;
 	lut_data->green = kcal_g;
 	lut_data->blue = kcal_b;
-
+	
 	mdss_mdp_kcal_update_pcc(lut_data);
 	mdss_mdp_kcal_display_commit();
-
+	
 	return count;
 }
 
 static ssize_t kcal_show(struct device *dev, struct device_attribute *attr,
-								char *buf)
+						 char *buf)
 {
 	struct kcal_lut_data *lut_data = dev_get_drvdata(dev);
-
+	
 	mdss_mdp_kcal_read_pcc(lut_data);
-
+	
 	return scnprintf(buf, PAGE_SIZE, "%d %d %d\n",
-		lut_data->red, lut_data->green, lut_data->blue);
+					 lut_data->red, lut_data->green, lut_data->blue);
 }
 
 static ssize_t kcal_min_store(struct device *dev,
-		struct device_attribute *attr, const char *buf, size_t count)
+							  struct device_attribute *attr, const char *buf, size_t count)
 {
 	int kcal_min, r;
 	struct kcal_lut_data *lut_data = dev_get_drvdata(dev);
-
+	
 	r = kstrtoint(buf, 10, &kcal_min);
 	if ((r) || (kcal_min < 1 || kcal_min > 256))
 		return -EINVAL;
-
+	
 	lut_data->minimum = kcal_min;
-
+	
 	mdss_mdp_kcal_update_pcc(lut_data);
 	mdss_mdp_kcal_display_commit();
-
+	
 	return count;
 }
 
 static ssize_t kcal_min_show(struct device *dev,
-		struct device_attribute *attr, char *buf)
+							 struct device_attribute *attr, char *buf)
 {
 	struct kcal_lut_data *lut_data = dev_get_drvdata(dev);
-
+	
 	return scnprintf(buf, PAGE_SIZE, "%d\n", lut_data->minimum);
 }
 
 static ssize_t kcal_enable_store(struct device *dev,
-		struct device_attribute *attr, const char *buf, size_t count)
+								 struct device_attribute *attr, const char *buf, size_t count)
 {
 	int kcal_enable, r;
 	struct kcal_lut_data *lut_data = dev_get_drvdata(dev);
-
+	
 	r = kstrtoint(buf, 10, &kcal_enable);
 	if ((r) || (kcal_enable != 0 && kcal_enable != 1) ||
 		(lut_data->enable == kcal_enable))
 		return -EINVAL;
-
+	
 	lut_data->enable = kcal_enable;
-
+	
 	mdss_mdp_kcal_update_pcc(lut_data);
 	mdss_mdp_kcal_update_pa(lut_data);
 	mdss_mdp_kcal_update_igc(lut_data);
 	mdss_mdp_kcal_display_commit();
-
+	
 	return count;
 }
 
 static ssize_t kcal_enable_show(struct device *dev,
-		struct device_attribute *attr, char *buf)
+								struct device_attribute *attr, char *buf)
 {
 	struct kcal_lut_data *lut_data = dev_get_drvdata(dev);
-
+	
 	return scnprintf(buf, PAGE_SIZE, "%d\n", lut_data->enable);
 }
 
 static ssize_t kcal_invert_store(struct device *dev,
-		struct device_attribute *attr, const char *buf, size_t count)
+								 struct device_attribute *attr, const char *buf, size_t count)
 {
 	int kcal_invert, r;
 	struct kcal_lut_data *lut_data = dev_get_drvdata(dev);
-
+	
 	r = kstrtoint(buf, 10, &kcal_invert);
 	if ((r) || (kcal_invert != 0 && kcal_invert != 1) ||
 		(lut_data->invert == kcal_invert))
 		return -EINVAL;
-
+	
 	lut_data->invert = kcal_invert;
-
+	
 	mdss_mdp_kcal_update_igc(lut_data);
 	mdss_mdp_kcal_display_commit();
-
+	
 	return count;
 }
 
 static ssize_t kcal_invert_show(struct device *dev,
-		struct device_attribute *attr, char *buf)
+								struct device_attribute *attr, char *buf)
 {
 	struct kcal_lut_data *lut_data = dev_get_drvdata(dev);
-
+	
 	return scnprintf(buf, PAGE_SIZE, "%d\n", lut_data->invert);
 }
 
 static ssize_t kcal_sat_store(struct device *dev,
-		struct device_attribute *attr, const char *buf, size_t count)
+							  struct device_attribute *attr, const char *buf, size_t count)
 {
 	int kcal_sat, r;
 	struct kcal_lut_data *lut_data = dev_get_drvdata(dev);
-
+	
 	r = kstrtoint(buf, 10, &kcal_sat);
 	if ((r) || ((kcal_sat < 224 || kcal_sat > 383) && kcal_sat != 128))
 		return -EINVAL;
-
+	
 	lut_data->sat = kcal_sat;
-
+	
 	mdss_mdp_kcal_update_pa(lut_data);
 	mdss_mdp_kcal_display_commit();
-
+	
 	return count;
 }
 
 static ssize_t kcal_sat_show(struct device *dev,
-		struct device_attribute *attr, char *buf)
+							 struct device_attribute *attr, char *buf)
 {
 	struct kcal_lut_data *lut_data = dev_get_drvdata(dev);
-
+	
 	return scnprintf(buf, PAGE_SIZE, "%d\n", lut_data->sat);
 }
 
 static ssize_t kcal_hue_store(struct device *dev,
-		struct device_attribute *attr, const char *buf, size_t count)
+							  struct device_attribute *attr, const char *buf, size_t count)
 {
 	int kcal_hue, r;
 	struct kcal_lut_data *lut_data = dev_get_drvdata(dev);
-
+	
 	r = kstrtoint(buf, 10, &kcal_hue);
 	if ((r) || (kcal_hue < 0 || kcal_hue > 1536))
 		return -EINVAL;
-
+	
 	lut_data->hue = kcal_hue;
-
+	
 	mdss_mdp_kcal_update_pa(lut_data);
 	mdss_mdp_kcal_display_commit();
-
+	
 	return count;
 }
 
 static ssize_t kcal_hue_show(struct device *dev,
-		struct device_attribute *attr, char *buf)
+							 struct device_attribute *attr, char *buf)
 {
 	struct kcal_lut_data *lut_data = dev_get_drvdata(dev);
-
+	
 	return scnprintf(buf, PAGE_SIZE, "%d\n", lut_data->hue);
 }
 
 static ssize_t kcal_val_store(struct device *dev,
-		struct device_attribute *attr, const char *buf, size_t count)
+							  struct device_attribute *attr, const char *buf, size_t count)
 {
 	int kcal_val, r;
 	struct kcal_lut_data *lut_data = dev_get_drvdata(dev);
-
+	
 	r = kstrtoint(buf, 10, &kcal_val);
 	if ((r) || (kcal_val < 128 || kcal_val > 383))
 		return -EINVAL;
-
+	
 	lut_data->val = kcal_val;
-
+	
 	mdss_mdp_kcal_update_pa(lut_data);
 	mdss_mdp_kcal_display_commit();
-
+	
 	return count;
 }
 
 static ssize_t kcal_val_show(struct device *dev,
-		struct device_attribute *attr, char *buf)
+							 struct device_attribute *attr, char *buf)
 {
 	struct kcal_lut_data *lut_data = dev_get_drvdata(dev);
-
+	
 	return scnprintf(buf, PAGE_SIZE, "%d\n", lut_data->val);
 }
 
 static ssize_t kcal_cont_store(struct device *dev,
-		struct device_attribute *attr, const char *buf, size_t count)
+							   struct device_attribute *attr, const char *buf, size_t count)
 {
 	int kcal_cont, r;
 	struct kcal_lut_data *lut_data = dev_get_drvdata(dev);
-
+	
 	r = kstrtoint(buf, 10, &kcal_cont);
 	if ((r) || (kcal_cont < 128 || kcal_cont > 383))
 		return -EINVAL;
-
+	
 	lut_data->cont = kcal_cont;
-
+	
 	mdss_mdp_kcal_update_pa(lut_data);
 	mdss_mdp_kcal_display_commit();
-
+	
 	return count;
 }
 
 static ssize_t kcal_cont_show(struct device *dev,
-		struct device_attribute *attr, char *buf)
+							  struct device_attribute *attr, char *buf)
 {
 	struct kcal_lut_data *lut_data = dev_get_drvdata(dev);
-
+	
 	return scnprintf(buf, PAGE_SIZE, "%d\n", lut_data->cont);
+}
+
+static ssize_t kcal_commit_wait_store(struct device *dev, struct device_attribute *attr,
+									  const char *buf, size_t count)
+{
+	int data, r;
+	
+	r = sscanf(buf, "%d", &data);
+	
+	if (r == 1 && data > 0 && data <= 10)
+		commit_wait = data;
+	else
+		commit_wait = 3;
+	
+	return count;
+}
+
+static ssize_t kcal_commit_wait_show(struct device *dev, struct device_attribute *attr,
+									 char *buf)
+{
+	return scnprintf(buf, PAGE_SIZE, "%d\n", commit_wait);
 }
 
 static DEVICE_ATTR(kcal, S_IWUSR | S_IRUGO, kcal_show, kcal_store);
 static DEVICE_ATTR(kcal_min, S_IWUSR | S_IRUGO, kcal_min_show, kcal_min_store);
 static DEVICE_ATTR(kcal_enable, S_IWUSR | S_IRUGO, kcal_enable_show,
-	kcal_enable_store);
+				   kcal_enable_store);
 static DEVICE_ATTR(kcal_invert, S_IWUSR | S_IRUGO, kcal_invert_show,
-	kcal_invert_store);
+				   kcal_invert_store);
 static DEVICE_ATTR(kcal_sat, S_IWUSR | S_IRUGO, kcal_sat_show, kcal_sat_store);
 static DEVICE_ATTR(kcal_hue, S_IWUSR | S_IRUGO, kcal_hue_show, kcal_hue_store);
 static DEVICE_ATTR(kcal_val, S_IWUSR | S_IRUGO, kcal_val_show, kcal_val_store);
 static DEVICE_ATTR(kcal_cont, S_IWUSR | S_IRUGO, kcal_cont_show,
-	kcal_cont_store);
+				   kcal_cont_store);
+static DEVICE_ATTR(kcal_commit_wait, S_IWUSR | S_IRUGO, kcal_commit_wait_show,
+				   kcal_commit_wait_store);
 
 static int kcal_ctrl_probe(struct platform_device *pdev)
 {
 	int ret;
 	struct kcal_lut_data *lut_data;
-
+	
 	lut_data = devm_kzalloc(&pdev->dev, sizeof(*lut_data), GFP_KERNEL);
 	if (!lut_data) {
 		pr_err("%s: failed to allocate memory for lut_data\n",
-			__func__);
+			   __func__);
 		return -ENOMEM;
 	}
-
+	
 	platform_set_drvdata(pdev, lut_data);
-
+	
 	lut_data->enable = 0x1;
 	lut_data->red = DEF_PCC;
 	lut_data->green = DEF_PCC;
@@ -551,12 +568,12 @@ static int kcal_ctrl_probe(struct platform_device *pdev)
 	lut_data->sat = DEF_PA;
 	lut_data->val = DEF_PA;
 	lut_data->cont = DEF_PA;
-
+	
 	mdss_mdp_kcal_update_pcc(lut_data);
 	mdss_mdp_kcal_update_pa(lut_data);
 	mdss_mdp_kcal_update_igc(lut_data);
 	mdss_mdp_kcal_display_commit();
-
+	
 	ret = device_create_file(&pdev->dev, &dev_attr_kcal);
 	ret |= device_create_file(&pdev->dev, &dev_attr_kcal_min);
 	ret |= device_create_file(&pdev->dev, &dev_attr_kcal_enable);
@@ -565,11 +582,12 @@ static int kcal_ctrl_probe(struct platform_device *pdev)
 	ret |= device_create_file(&pdev->dev, &dev_attr_kcal_hue);
 	ret |= device_create_file(&pdev->dev, &dev_attr_kcal_val);
 	ret |= device_create_file(&pdev->dev, &dev_attr_kcal_cont);
+	ret |= device_create_file(&pdev->dev, &dev_attr_kcal_commit_wait);
 	if (ret) {
 		pr_err("%s: unable to create sysfs entries\n", __func__);
 		return ret;
 	}
-
+	
 	return 0;
 }
 
@@ -583,7 +601,7 @@ static int kcal_ctrl_remove(struct platform_device *pdev)
 	device_remove_file(&pdev->dev, &dev_attr_kcal_hue);
 	device_remove_file(&pdev->dev, &dev_attr_kcal_val);
 	device_remove_file(&pdev->dev, &dev_attr_kcal_cont);
-
+	
 	return 0;
 }
 
@@ -603,15 +621,12 @@ static int __init kcal_ctrl_init(void)
 {
 	if (platform_driver_register(&kcal_ctrl_driver))
 		return -ENODEV;
-
+	
 	if (platform_device_register(&kcal_ctrl_device))
 		return -ENODEV;
-
-	wq_kcal = alloc_workqueue("wq_kcal", WQ_HIGHPRI, 0);
-	INIT_WORK(&work_kcal_commit, kcal_commit_work);
-
+	
 	pr_info("%s: registered\n", __func__);
-
+	
 	return 0;
 }
 
@@ -619,7 +634,6 @@ static void __exit kcal_ctrl_exit(void)
 {
 	platform_device_unregister(&kcal_ctrl_device);
 	platform_driver_unregister(&kcal_ctrl_driver);
-	destroy_workqueue(wq_kcal);
 }
 
 module_init(kcal_ctrl_init);
