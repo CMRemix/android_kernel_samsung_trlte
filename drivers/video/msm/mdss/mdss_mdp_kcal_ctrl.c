@@ -20,8 +20,15 @@
 #include <linux/platform_device.h>
 #include <linux/init.h>
 #include <linux/module.h>
+#include <linux/delay.h>
 
 #include "mdss_mdp.h"
+
+static int ctr_commits = 0;
+bool flg_kcal_needs_write = false;
+
+static struct workqueue_struct *wq_kcal;
+struct work_struct work_kcal_commit;
 
 #define DEF_PCC 0x100
 #define DEF_PA 0xff
@@ -132,11 +139,17 @@ static uint32_t igc_rgb[IGC_LUT_ENTRIES] = {
 	48, 32, 16, 0
 };
 
-static int mdss_mdp_kcal_display_commit(void)
+static void kcal_commit_work(struct work_struct * work)
 {
-	int ret = 0;
 	struct mdss_mdp_ctl *ctl;
 	struct mdss_data_type *mdata = mdss_mdp_get_mdata();
+
+	// give a commit a chance to happen, so we don't have to force one (which might cause tearing).
+	msleep(2);
+
+	// so did any happen yet?
+	if (!flg_kcal_needs_write)
+		return;
 
 	ctl = mdata->ctl_off;
 	
@@ -144,16 +157,28 @@ static int mdss_mdp_kcal_display_commit(void)
 	if ((mdss_mdp_ctl_is_power_on(ctl)) && (ctl->mfd)) {
 #if defined(CONFIG_FB_MSM_MDSS_SAMSUNG)
 		mdss_mdp_display_wait4comp(ctl);
-		ret = mdss_mdp_display_commit(ctl, NULL, NULL);
+		mdss_mdp_display_commit(ctl, NULL, NULL);
 		mdss_mdp_display_wait4comp(ctl);
 #else
-		ret = mdss_mdp_pp_setup(ctl);
+		mdss_mdp_pp_setup(ctl);
 #endif
-		if (ret)
-			pr_err("%s: commit failed: %d\n", __func__, ret);
 	}
+}
 
-	return ret;
+static int mdss_mdp_kcal_display_commit(void)
+{
+	ctr_commits++;
+
+	// for some reason it crashes immediately upon starting to boot,
+	// so be lazy and just block it once.
+	if (ctr_commits < 2)
+		return 1;
+
+	if (!work_busy(&work_kcal_commit)) {
+		queue_work_on(0, wq_kcal, &work_kcal_commit);
+		return 0;
+	} else
+		return 1;
 }
 
 static void mdss_mdp_kcal_update_pcc(struct kcal_lut_data *lut_data)
@@ -179,6 +204,8 @@ static void mdss_mdp_kcal_update_pcc(struct kcal_lut_data *lut_data)
 	pcc_config.b.b = lut_data->blue * PCC_ADJ;
 
 	mdss_mdp_pcc_config(&pcc_config, &copyback);
+	if (!work_busy(&work_kcal_commit))
+		flg_kcal_needs_write = true;
 }
 
 static void mdss_mdp_kcal_read_pcc(struct kcal_lut_data *lut_data)
@@ -246,6 +273,8 @@ static void mdss_mdp_kcal_update_pa(struct kcal_lut_data *lut_data)
 
 		mdss_mdp_pa_v2_config(&pa_v2_config, &copyback);
 	}
+	if (!work_busy(&work_kcal_commit))
+		flg_kcal_needs_write = true;
 }
 
 static void mdss_mdp_kcal_update_igc(struct kcal_lut_data *lut_data)
@@ -264,6 +293,8 @@ static void mdss_mdp_kcal_update_igc(struct kcal_lut_data *lut_data)
 	igc_config.c2_data = igc_rgb;
 
 	mdss_mdp_igc_lut_config(&igc_config, &copyback, copy_from_kernel);
+	if (!work_busy(&work_kcal_commit))
+		flg_kcal_needs_write = true;
 }
 
 static ssize_t kcal_store(struct device *dev, struct device_attribute *attr,
@@ -576,6 +607,9 @@ static int __init kcal_ctrl_init(void)
 	if (platform_device_register(&kcal_ctrl_device))
 		return -ENODEV;
 
+	wq_kcal = alloc_workqueue("wq_kcal", WQ_HIGHPRI, 0);
+	INIT_WORK(&work_kcal_commit, kcal_commit_work);
+
 	pr_info("%s: registered\n", __func__);
 
 	return 0;
@@ -585,6 +619,7 @@ static void __exit kcal_ctrl_exit(void)
 {
 	platform_device_unregister(&kcal_ctrl_device);
 	platform_driver_unregister(&kcal_ctrl_driver);
+	destroy_workqueue(wq_kcal);
 }
 
 module_init(kcal_ctrl_init);

@@ -29,6 +29,8 @@
 
 #undef MDSS_BW_DEBUG
 
+extern bool flg_kcal_needs_write;
+
 static void mdss_mdp_xlog_mixer_reg(struct mdss_mdp_ctl *ctl);
 static inline u64 fudge_factor(u64 val, u32 numer, u32 denom)
 {
@@ -3028,6 +3030,8 @@ int mdss_mdp_display_commit(struct mdss_mdp_ctl *ctl, void *arg,
 		pr_err("display function not set\n");
 		return -ENODEV;
 	}
+
+	flg_kcal_needs_write = false;
 
 	mutex_lock(&ctl->lock);
 	pr_debug("commit ctl=%d play_cnt=%d\n", ctl->num, ctl->play_cnt);
