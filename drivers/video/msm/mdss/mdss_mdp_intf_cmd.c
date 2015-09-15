@@ -749,12 +749,12 @@ static int mdss_mdp_cmd_wait4pingpong(struct mdss_mdp_ctl *ctl, void *arg)
 
 	if (rc <= 0) {
 		if (!ctx->pp_timeout_report_cnt) {
-			WARN(1, "cmd kickoff timed out (%d) ctl=%d\n",
+/*			WARN(1, "cmd kickoff timed out (%d) ctl=%d\n",
 					rc, ctl->num);
-			MDSS_XLOG_TOUT_HANDLER("mdp", "dsi0", "dsi1", "panic");
+			MDSS_XLOG_TOUT_HANDLER("mdp", "dsi0", "dsi1", "panic");*/
 			mdss_mdp_ctl_reset(ctx->ctl);
 			mdss_fb_send_panel_reset_event(ctl->mfd);
-#if defined (CONFIG_FB_MSM_MDSS_DSI_DBG)
+/*#if defined (CONFIG_FB_MSM_MDSS_DSI_DBG)
 			mdss_dsi_debug_check_te(pdata);
 			dumpreg();
 			mdp5_dump_regs();
@@ -762,7 +762,7 @@ static int mdss_mdp_cmd_wait4pingpong(struct mdss_mdp_ctl *ctl, void *arg)
 			xlog_dump();
 			pr_err("mdp clk rate=%ld\n", mdss_mdp_get_clk_rate(MDSS_CLK_MDP_SRC));
 			panic("Pingpong Timeout");
-#endif
+#endif*/
 		}
 		ctx->pp_timeout_report_cnt++;
 		rc = -EPERM;
