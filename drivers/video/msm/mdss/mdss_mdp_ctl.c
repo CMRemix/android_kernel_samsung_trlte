@@ -3031,10 +3031,12 @@ int mdss_mdp_display_commit(struct mdss_mdp_ctl *ctl, void *arg,
 		return -ENODEV;
 	}
 
-	flg_kcal_needs_write = false;
-
-	mutex_lock(&ctl->lock);
+	// use a trylock to reduce tearing when kcal is injecting commits.
+	// don't bother indenting, as that will make git think this whole section changed.
+	if (mutex_trylock(&ctl->lock)) {
 	pr_debug("commit ctl=%d play_cnt=%d\n", ctl->num, ctl->play_cnt);
+
+	flg_kcal_needs_write = false;
 
 	if (!mdss_mdp_ctl_is_power_on(ctl)) {
 		mutex_unlock(&ctl->lock);
@@ -3199,7 +3201,6 @@ int mdss_mdp_display_commit(struct mdss_mdp_ctl *ctl, void *arg,
 		}
 	}
 #endif
-
 	if (sctl && !ctl->valid_roi && sctl->valid_roi) {
 		/*
 		 * Seperate kickoff on DSI1 is needed only when we have
@@ -3227,6 +3228,8 @@ done:
 	mdss_mdp_clk_ctrl(MDP_BLOCK_POWER_OFF, false);
 
 	mutex_unlock(&ctl->lock);
+	} else
+		pr_info("[mdss_mdp_display_commit] skipping, commit already in progress\n");
 
 	return ret;
 }

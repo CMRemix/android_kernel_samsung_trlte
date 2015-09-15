@@ -715,6 +715,12 @@ static int mdss_mdp_cmd_wait4pingpong(struct mdss_mdp_ctl *ctl, void *arg)
 			atomic_read(&ctx->koff_cnt) == 0,
 			KOFF_TIMEOUT);
 
+	if (!rc) {
+		pr_info("[mdss_mdp_cmd_wait4pingpong] bad frame\n");
+		atomic_set(&ctx->koff_cnt, 0);
+		return 0;
+	}
+
 	trace_mdp_cmd_wait_pingpong(ctl->num,
 				atomic_read(&ctx->koff_cnt));
 
