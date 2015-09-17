@@ -248,7 +248,7 @@ static void detect_doubletap2wake(int x, int y, bool st)
 	if (flg_power_suspended) {
 		// the screen is off.
 		
-		if ((!flg_tw_expired && sttg_tw_timeout > 0 && do_timesince(time_power_suspended) < sttg_tw_timeout) || sttg_tw_timeout == 0) {
+		if ((!flg_tw_expired && sttg_tw_timeout > 0 && do_timesince(time_power_suspended) < sttg_tw_timeout) || (!flg_sensor_prox_detecting && sttg_tw_timeout == 0)) {
 			
         bool single_touch = st;
 #if WG_DEBUG
@@ -366,7 +366,7 @@ static void detect_sweep2wake_v(int x, int y, bool st)
 	if (flg_power_suspended) {
 		// the screen is off.
 		
-		if ((!flg_tw_expired && sttg_tw_timeout > 0 && do_timesince(time_power_suspended) < sttg_tw_timeout) || sttg_tw_timeout == 0) {
+		if ((!flg_tw_expired && sttg_tw_timeout > 0 && do_timesince(time_power_suspended) < sttg_tw_timeout) || (!flg_sensor_prox_detecting && sttg_tw_timeout == 0)) {
 
 			int prevy = 0, nexty = 0;
 		        bool single_touch = st;
@@ -469,7 +469,7 @@ static void detect_sweep2wake_h(int x, int y, bool st)
 	if (firstx < SWEEP_X_START && single_touch &&
 			((flg_power_suspended && (s2w_switch & SWEEP_RIGHT)) && 
 			(!flg_tw_expired && sttg_tw_timeout > 0 && do_timesince(time_power_suspended) < sttg_tw_timeout)) || 
-			(sttg_tw_timeout == 0 && flg_power_suspended && (s2w_switch & SWEEP_RIGHT))) {
+			(!flg_sensor_prox_detecting && sttg_tw_timeout == 0 && flg_power_suspended && (s2w_switch & SWEEP_RIGHT))) {
 		prevx = 0;
 		nextx = SWEEP_X_B1;
 		if ((barrierx[0] == true) ||
@@ -505,7 +505,7 @@ static void detect_sweep2wake_h(int x, int y, bool st)
 	} else if (firstx >= SWEEP_X_START && single_touch &&
 			((flg_power_suspended && (s2w_switch & SWEEP_LEFT)) && 
 			(!flg_tw_expired && sttg_tw_timeout > 0 && do_timesince(time_power_suspended) < sttg_tw_timeout)) || 
-			(sttg_tw_timeout == 0 && flg_power_suspended && (s2w_switch & SWEEP_LEFT))) {
+			(!flg_sensor_prox_detecting && sttg_tw_timeout == 0 && flg_power_suspended && (s2w_switch & SWEEP_LEFT))) {
 		prevx = (SWEEP_X_MAX - SWEEP_X_FINAL);
 		nextx = SWEEP_X_B2;
 		if ((barrierx[0] == true) ||
