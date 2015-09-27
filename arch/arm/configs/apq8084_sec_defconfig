@@ -1,4 +1,8 @@
-CONFIG_LOCALVERSION="-ZION959-TRLTE-Ultimate-Kernel-2.7"
+#
+# Automatically generated file; DO NOT EDIT.
+# Linux/arm 3.10.89 Kernel Configuration
+#
+CONFIG_LOCALVERSION="-ZION959-TRLTE-Ultimate-Kernel-2.9"
 CONFIG_CROSS_COMPILE="arm-eabi-"
 CONFIG_HAVE_PROC_CPU=y
 CONFIG_CGROUP_CPUACCT=y
