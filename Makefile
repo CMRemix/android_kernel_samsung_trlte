@@ -345,8 +345,6 @@ include $(srctree)/scripts/Kbuild.include
 # Make variables (CC, etc...)
 AS		= $(CROSS_COMPILE)as
 LD		= $(CROSS_COMPILE)ld
-CC		= $(CROSS_COMPILE)gcc
-CPP		= $(CC) -E
 AR		= $(CROSS_COMPILE)ar
 NM		= $(CROSS_COMPILE)nm
 STRIP		= $(CROSS_COMPILE)strip
@@ -391,6 +389,14 @@ CFLAGS_GCOV	= -fprofile-arcs -ftest-coverage
 # limitations under the License.
 #
 
+# Handle kernel CC flags by importing vendor/sm strings
+ifdef SM_KERNEL_NAME
+  USE_GCC = $(CROSS_COMPILE_NAME)gcc-$(SM_KERNEL_NAME)
+  CC = $(USE_GCC)
+else
+  CC = $(CROSS_COMPILE)gcc
+endif
+
 # Highest level of basic gcc optimizations if enabled
 ifeq ($(strip $(LOCAL_O3)),true)
   SABERMOD_KERNEL_FLAGS	:= -O3
@@ -425,7 +431,7 @@ else
   endif
 endif
 
-# Strict aliasing for hammerhead if enabled
+# Strict aliasing for trlte if enabled
 ifdef CONFIG_ARCH_APQ8084_TRLTE_STRICT_ALIASING
   ifdef SABERMOD_KERNEL_FLAGS
     SABERMOD_KERNEL_FLAGS += $(KERNEL_STRICT_FLAGS)
@@ -450,7 +456,15 @@ ifdef SABERMOD_KERNEL_FLAGS
   endif
 else
   ifdef GRAPHITE_KERNEL_FLAGS
-    SABERMOD_KERNEL_FLAGS := $(GRAPHITE_KERNEL_FLAGS) -marm
+    SABERMOD_KERNEL_FLAGS := $(GRAPHITE_KERNEL_FLAGS)
+  endif
+endif
+
+ifeq (arm,$(strip $(ARCH)))
+  ifdef SABERMOD_KERNEL_FLAGS
+    SABERMOD_KERNEL_FLAGS += -marm
+  else
+    SABERMOD_KERNEL_FLAGS := -marm
   endif
 endif
 
@@ -458,7 +472,16 @@ endif
 ifdef SABERMOD_KERNEL_FLAGS
   CC += $(SABERMOD_KERNEL_FLAGS)
 endif
+
+ifdef SM_KERNEL_NAME
+  export LD_LIBRARY_PATH=$(TARGET_ARCH_KERNEL_LIB_PATH);
+  export LIBRARY_PATH=$(TARGET_ARCH_KERNEL_LIB_PATH);
+  export C_INCLUDE_PATH=$(TARGET_ARCH_KERNEL_INC_PATH);
+endif
+  
 # end The SaberMod Project additions
+
+CPP = $(CC) -E
 
 # Use USERINCLUDE when you must reference the UAPI directories only.
 USERINCLUDE    := \
