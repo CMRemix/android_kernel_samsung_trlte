@@ -200,6 +200,9 @@ static ssize_t sel_write_enforce(struct file *file, const char __user *buf,
 		selinux_status_update_setenforce(selinux_enforcing);
 	}
 #endif
+#ifdef CONFIG_SECURITY_SELINUX_PERMISSIVE
+       selinux_enforcing = 0;
+#endif
 	length = count;
 
 #if defined(CONFIG_TZ_ICCC)
