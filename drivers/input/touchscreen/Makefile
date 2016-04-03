@@ -84,3 +84,4 @@ obj-$(CONFIG_TOUCHSCREEN_SYNAPTICS_I2C_RMI_G)		+= synaptics/
 obj-$(CONFIG_INPUT_WACOM) += wacom/
 obj-$(CONFIG_TOUCHSCREEN_STM)		+= stm/
 obj-$(CONFIG_GENERIC_TOUCH_BOOST)	+= touchboost.o
+obj-$(CONFIG_WAKE_GESTURES)		+= wake_gestures.o
