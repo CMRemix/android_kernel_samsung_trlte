@@ -52,6 +52,17 @@ config SECURITY_SELINUX_DISABLE
 
 	  If you are unsure how to answer this question, answer N.
 
+config SECURITY_SELINUX_PERMISSIVE
+	bool "NSA SELinux permissive mode"
+	depends on SECURITY_SELINUX
+	default n
+	help
+	  With this option enabled, the kernel will start
+	  in permissive mode (log everything, deny nothing)
+	  unless you specify selinux_enforcing = 1
+
+	  If you are unsure how to answer this question, answer N.
+
 config SECURITY_SELINUX_DEVELOP
 	bool "NSA SELinux Development Support"
 	depends on SECURITY_SELINUX
