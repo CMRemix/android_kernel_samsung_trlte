@@ -24,6 +24,12 @@
 #include <linux/log2.h>
 #include <linux/qpnp/power-on.h>
 
+#ifdef CONFIG_WAKE_GESTURES
+#include <linux/wake_gestures.h>
+#endif
+
+struct timeval time_pressed_power;
+
 #if defined(CONFIG_SEC_DEBUG)
 #include <mach/sec_debug.h>
 #endif
@@ -504,6 +510,11 @@ qpnp_pon_input_dispatch(struct qpnp_pon *pon, u32 pon_type)
 		input_sync(pon->pon_input);
 	}
 
+	if (cfg->key_code == 116 && (key_status || (!cfg->old_state && !key_status))) {
+		// save when power was last pressed, for touchwake.
+		do_gettimeofday(&time_pressed_power);
+	}
+	
 	input_report_key(pon->pon_input, cfg->key_code, key_status);
 	input_sync(pon->pon_input);
 	pr_info("[KEY] code(0x%02X), value(%d)\n", cfg->key_code, key_status);
@@ -1259,6 +1270,12 @@ static int qpnp_pon_config_init(struct qpnp_pon *pon)
 				"Can't register pon key: %d\n", rc);
 			goto free_input_dev;
 		}
+#ifdef CONFIG_WAKE_GESTURES
+		else {
+			 wg_setdev(pon->pon_input);
+			 printk(KERN_INFO "[sweep2wake]: set device %s\n", pon->pon_input->name);
+		}
+#endif
 	}
 
 	for (i = 0; i < pon->num_pon_config; i++) {
