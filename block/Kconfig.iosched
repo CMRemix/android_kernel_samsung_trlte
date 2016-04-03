@@ -15,7 +15,7 @@ config IOSCHED_NOOP
 config IOSCHED_TEST
 	tristate "Test I/O scheduler"
 	depends on DEBUG_FS
-	default m
+	default n
 	---help---
 	  The test I/O scheduler is a duplicate of the noop scheduler with
 	  addition of test utlity.
@@ -43,6 +43,13 @@ config IOSCHED_ROW
 	  according to queue priority.
 	  Most suitable for mobile devices.
 
+config IOSCHED_ZEN
+	tristate "Zen I/O scheduler"
+	default y
+	---help---
+	FCFS, dispatches are back-inserted, deadlines ensure fairness.
+        Should work best with devices where there is no travel delay.
+
 config IOSCHED_CFQ
 	tristate "CFQ I/O scheduler"
 	default y
@@ -57,13 +64,13 @@ config IOSCHED_CFQ
 config CFQ_GROUP_IOSCHED
 	bool "CFQ Group Scheduling support"
 	depends on IOSCHED_CFQ && BLK_CGROUP
-	default n
+	default y
 	---help---
 	  Enable group IO scheduling in CFQ.
 
 config IOSCHED_BFQ
 	tristate "BFQ I/O scheduler"
-	default n
+	default y
 	---help---
 	  The BFQ I/O scheduler tries to distribute bandwidth among
 	  all processes according to their weights.
@@ -76,7 +83,7 @@ config IOSCHED_BFQ
 config CGROUP_BFQIO
 	bool "BFQ hierarchical scheduling support"
 	depends on CGROUPS && IOSCHED_BFQ=y
-	default n
+	default y
 	---help---
 	  Enable hierarchical scheduling in BFQ, using the cgroups
 	  filesystem interface.  The name of the subsystem will be
@@ -90,8 +97,8 @@ config IOSCHED_FIOPS
           IOPS equally among all processes in the system. It's mainly for
           Flash based storage.
 
-config IOSCHED_SIO
-	tristate "Simple I/O scheduler"
+config IOSCHED_SIOPLUS
+	tristate "Simple I/O scheduler plus"
 	default y
 	---help---
 	  The Simple I/O scheduler is an extremely simple scheduler,
@@ -136,8 +143,8 @@ choice
 	config DEFAULT_NOOP
 		bool "No-op"
 
-	config DEFAULT_SIO
-		bool "SIO" if IOSCHED_SIO=y
+	config DEFAULT_SIOPLUS
+		bool "SIOPLUS" if IOSCHED_SIOPLUS=y
 
 	config DEFAULT_FIOPS
 		bool "FIOPS" if IOSCHED_FIOPS=y
@@ -152,7 +159,8 @@ config DEFAULT_IOSCHED
 	default "bfq" if DEFAULT_BFQ
 	default "noop" if DEFAULT_NOOP
 	default "fiops" if DEFAULT_FIOPS
-	default "sio" if DEFAULT_SIO
+	default "sioplus" if DEFAULT_SIOPLUS
+	default "zen" if DEFAULT_ZEN
 
 endmenu
 
