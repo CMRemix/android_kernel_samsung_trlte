@@ -37,7 +37,7 @@
 #define MIN_BCL_POLL_INTERVAL 10
 #define BATTERY_VOLTAGE_MIN 3400
 #define BTM_8084_FREQ_MITIG_LIMIT 1958400
-#define BTM_SMB135X_VOLTAGE_MIN 2750000
+#define BTM_MAX77823_VOLTAGE_MIN 2750000
 
 static char *battery_str = "battery";
 /*
@@ -158,8 +158,8 @@ struct bcl_context {
 	int btm_vph_chan;
 	uint32_t btm_vph_high_thresh;
 	uint32_t btm_vph_low_thresh;
-	/*smb135x low voltage threshold */
-	uint32_t btm_smb135x_low_thresh;
+	/*max77823 low voltage threshold */
+	uint32_t btm_max77823_low_thresh;
 	struct qpnp_adc_tm_btm_param btm_vph_adc_param;
 	/* Low temp min freq limit requested by thermal */
 	uint32_t btm_freq_limit;
@@ -204,7 +204,7 @@ static void power_supply_callback(struct power_supply *psy)
 	if (0 != bcl_get_battery_voltage(&vbatt))
 		return;
 	if (vbatt <= gbcl->btm_vph_low_thresh) {
-		/*relay the notification to smb135x driver*/
+		/*relay the notification to max77823 driver*/
 		bcl_config_vph_adc(gbcl, BCL_LOW_THRESHOLD_TYPE_MIN);
 	} else if ((vbatt  > gbcl->btm_vph_low_thresh) &&
 		(vbatt <= gbcl->btm_vph_high_thresh))
@@ -354,8 +354,8 @@ static void battery_monitor_work(struct work_struct *work)
 		pr_debug("vbat is %d\n", vbatt);
 		if (bcl_vph_state == BCL_LOW_THRESHOLD) {
 			if (vbatt <= gbcl->btm_vph_low_thresh) {
-				/*relay the notification to smb135x driver*/
-				if (bcl->btm_smb135x_low_thresh ==
+				/*relay the notification to max77823 driver*/
+				if (bcl->btm_max77823_low_thresh ==
 					gbcl->btm_vph_adc_param.low_thr) {
 					pr_info("Hit shutdown voltage\n");
 					bcl_hit_shutdown_voltage = true;
@@ -402,7 +402,7 @@ static int bcl_config_vph_adc(struct bcl_context *bcl,
 		break;
 	case BCL_LOW_THRESHOLD_TYPE_MIN:
 		bcl->btm_vph_adc_param.state_request = ADC_TM_LOW_THR_ENABLE;
-		bcl->btm_vph_adc_param.low_thr = bcl->btm_smb135x_low_thresh;
+		bcl->btm_vph_adc_param.low_thr = bcl->btm_max77823_low_thresh;
 		break;
 	default:
 		pr_err("Invalid threshold type:%d\n", thresh_type);
@@ -978,7 +978,7 @@ static int bcl_resume(struct device *dev)
 		bcl->btm_mode = BCL_VPH_MONITOR_MODE;
 		bcl_get_battery_voltage(&vbatt);
 		if (vbatt <= gbcl->btm_vph_low_thresh) {
-			/*relay the notification to smb135x driver*/
+			/*relay the notification to max77823 driver*/
 			bcl_config_vph_adc(gbcl, BCL_LOW_THRESHOLD_TYPE_MIN);
 		} else if ((vbatt  > gbcl->btm_vph_low_thresh) &&
 			(vbatt <= gbcl->btm_vph_high_thresh))
@@ -988,31 +988,31 @@ static int bcl_resume(struct device *dev)
 	}
 	return 0;
 }
-static void get_smb135x_low_voltage_uv(struct bcl_context *bcl,
+static void get_max77823_low_voltage_uv(struct bcl_context *bcl,
 				struct device_node *ibat_node)
 {
 	int ret = 0;
 	struct device_node *phandle = NULL;
 	char *key = NULL;
 
-	key = "smb135x-handle";
+	key = "max77823-handle";
 	phandle = of_parse_phandle(ibat_node, key, 0);
 	if (!phandle) {
-		pr_err("smb135x handle not present\n");
+		pr_err("max77823 handle not present\n");
 		ret = -ENODEV;
-		goto smb135x_exit;
+		goto max77823_exit;
 	}
 	key = "qcom,low-voltage-uv";
 	ret = of_property_read_u32(phandle, key,
-					&bcl->btm_smb135x_low_thresh);
+					&bcl->btm_max77823_low_thresh);
 	if (ret) {
 		pr_err("Error reading property %s. ret:%d\n", key, ret);
-		goto smb135x_exit;
+		goto max77823_exit;
 	}
 
-smb135x_exit:
+max77823_exit:
 	if (ret)
-		bcl->btm_smb135x_low_thresh = BTM_SMB135X_VOLTAGE_MIN;
+		bcl->btm_max77823_low_thresh = BTM_MAX77823_VOLTAGE_MIN;
 	return;
 }
 static void get_vdd_rstr_freq(struct bcl_context *bcl,
@@ -1150,7 +1150,7 @@ static int probe_btm_properties(struct bcl_context *bcl)
 		bcl_hotplug_enabled = false;
 
 	get_vdd_rstr_freq(bcl, ibat_node);
-	get_smb135x_low_voltage_uv(bcl, ibat_node);
+	get_max77823_low_voltage_uv(bcl, ibat_node);
 	bcl->btm_freq_max = max(bcl->btm_freq_max, bcl->btm_freq_limit);
 	bcl->bcl_monitor_type = BCL_IBAT_MONITOR_TYPE;
 	snprintf(bcl->bcl_type, BCL_NAME_LENGTH, "%s",
