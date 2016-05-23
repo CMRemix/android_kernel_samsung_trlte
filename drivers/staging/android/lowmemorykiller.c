@@ -706,7 +706,7 @@ static struct shrinker lowmem_shrinker = {
 static int __init lowmem_init(void)
 {
 	register_shrinker(&lowmem_shrinker);
-	vmpressure_notifier_register(&lmk_vmpr_nb);
+	//vmpressure_notifier_register(&lmk_vmpr_nb);
 #ifdef CONFIG_SEC_OOM_KILLER
 	register_oom_notifier(&android_oom_notifier);
 #endif
