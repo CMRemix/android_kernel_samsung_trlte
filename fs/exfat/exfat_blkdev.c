@@ -16,10 +16,10 @@
  *  Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
  */
 
+#include "exfat_global.h"
+
 #include <linux/blkdev.h>
 
-#include "exfat_config.h"
-#include "exfat_global.h"
 #include "exfat_blkdev.h"
 #include "exfat_data.h"
 #include "exfat_api.h"
@@ -65,7 +65,7 @@ INT32 bdev_read(struct super_block *sb, UINT32 secno, struct buffer_head **bh, U
 {
 	BD_INFO_T *p_bd = &(EXFAT_SB(sb)->bd_info);
 	FS_INFO_T *p_fs = &(EXFAT_SB(sb)->fs_info);
-#if EXFAT_CONFIG_KERNEL_DEBUG
+#ifdef CONFIG_EXFAT_DEBUG
 	struct exfat_sb_info *sbi = EXFAT_SB(sb);
 	long flags = sbi->debug_flags;
 
@@ -95,7 +95,7 @@ INT32 bdev_write(struct super_block *sb, UINT32 secno, struct buffer_head *bh, U
 	struct buffer_head *bh2;
 	BD_INFO_T *p_bd = &(EXFAT_SB(sb)->bd_info);
 	FS_INFO_T *p_fs = &(EXFAT_SB(sb)->fs_info);
-#if EXFAT_CONFIG_KERNEL_DEBUG
+#ifdef CONFIG_EXFAT_DEBUG
 	struct exfat_sb_info *sbi = EXFAT_SB(sb);
 	long flags = sbi->debug_flags;
 
@@ -142,7 +142,7 @@ no_bh:
 INT32 bdev_sync(struct super_block *sb)
 {
 	BD_INFO_T *p_bd = &(EXFAT_SB(sb)->bd_info);
-#if EXFAT_CONFIG_KERNEL_DEBUG
+#ifdef CONFIG_EXFAT_DEBUG
 	struct exfat_sb_info *sbi = EXFAT_SB(sb);
 	long flags = sbi->debug_flags;
 
@@ -152,4 +152,25 @@ INT32 bdev_sync(struct super_block *sb)
 	if (!p_bd->opened) return(FFS_MEDIAERR);
 
 	return sync_blockdev(sb->s_bdev);
+}
+
+INT32 bdev_reada(struct super_block *sb, UINT32 secno, UINT32 num_secs)
+{
+	BD_INFO_T *p_bd = &(EXFAT_SB(sb)->bd_info);
+	UINT32 sects_per_page = (PAGE_SIZE >> sb->s_blocksize_bits);
+	struct blk_plug plug;
+	UINT32 i;
+
+	if (!p_bd->opened)
+		return (FFS_MEDIAERR);
+
+	blk_start_plug(&plug);
+	for (i = 0; i < num_secs; i++) {
+		if (i && !(i & (sects_per_page - 1)))
+			blk_flush_plug_list(&plug, false);
+		sb_breadahead(sb, secno + i);
+	}
+	blk_finish_plug(&plug);
+
+	return 0;
 }
