@@ -1113,6 +1113,8 @@ static int max77843_chg_get_property(struct power_supply *psy,
 	case POWER_SUPPLY_PROP_CURRENT_MAX:
 	case POWER_SUPPLY_PROP_CURRENT_AVG:
 		val->intval = max77843_get_input_current(charger);
+		// AOSP expects microamperes
+		val->intval *= 1000;
 		break;
 	case POWER_SUPPLY_PROP_CURRENT_NOW:
 		val->intval = max77843_get_input_current(charger);
