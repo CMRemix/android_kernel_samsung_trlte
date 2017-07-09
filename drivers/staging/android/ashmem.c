@@ -294,7 +294,15 @@ static int ashmem_mmap(struct file *file, struct vm_area_struct *vma)
 {
 	struct ashmem_area *asma = file->private_data;
 	int ret = 0;
-
+#ifdef CONFIG_TIMA_RKP	
+	if ((vma->vm_end - vma->vm_start) && (boot_mode_security == 1)) {
+		cpu_v7_tima_iommu_opt(vma->vm_start, vma->vm_end, (unsigned long)vma->vm_mm->pgd);
+		__asm__ __volatile__ (
+		"mcr    p15, 0, r0, c8, c3, 0\n"
+		"dsb\n"
+		"isb\n");
+	}
+#endif
 	mutex_lock(&ashmem_mutex);
 
 	/* user needs to SET_SIZE before mapping */
@@ -374,7 +382,7 @@ static int ashmem_shrink(struct shrinker *s, struct shrink_control *sc)
 		loff_t start = range->pgstart * PAGE_SIZE;
 		loff_t end = (range->pgend + 1) * PAGE_SIZE;
 
-		do_fallocate(range->asma->file,
+		range->asma->file->f_op->fallocate(range->asma->file,
 				FALLOC_FL_PUNCH_HOLE | FALLOC_FL_KEEP_SIZE,
 				start, end - start);
 		range->purged = ASHMEM_WAS_PURGED;
@@ -825,11 +833,29 @@ static long compat_ashmem_ioctl(struct file *file, unsigned int cmd, unsigned lo
 }
 #endif
 
+static const struct file_operations ashmem_fops = {
+	.owner = THIS_MODULE,
+	.open = ashmem_open,
+	.release = ashmem_release,
+	.read = ashmem_read,
+	.llseek = ashmem_llseek,
+	.mmap = ashmem_mmap,
+	.unlocked_ioctl = ashmem_ioctl,
+#ifdef CONFIG_COMPAT
+	.compat_ioctl = compat_ashmem_ioctl,
+#endif
+};
+
+static struct miscdevice ashmem_misc = {
+	.minor = MISC_DYNAMIC_MINOR,
+	.name = "ashmem",
+	.fops = &ashmem_fops,
+};
+
+
 static int is_ashmem_file(struct file *file)
 {
-	char fname[256], *name;
-	name = dentry_path(file->f_dentry, fname, 256);
-	return strcmp(name, "/ashmem") ? 0 : 1;
+	return (file->f_op == &ashmem_fops);
 }
 
 int get_ashmem_file(int fd, struct file **filp, struct file **vm_file,
@@ -877,25 +903,6 @@ void put_ashmem_file(struct file *file)
 		fput(file);
 }
 EXPORT_SYMBOL(put_ashmem_file);
-
-static const struct file_operations ashmem_fops = {
-	.owner = THIS_MODULE,
-	.open = ashmem_open,
-	.release = ashmem_release,
-	.read = ashmem_read,
-	.llseek = ashmem_llseek,
-	.mmap = ashmem_mmap,
-	.unlocked_ioctl = ashmem_ioctl,
-#ifdef CONFIG_COMPAT
-	.compat_ioctl = compat_ashmem_ioctl,
-#endif
-};
-
-static struct miscdevice ashmem_misc = {
-	.minor = MISC_DYNAMIC_MINOR,
-	.name = "ashmem",
-	.fops = &ashmem_fops,
-};
 
 static int __init ashmem_init(void)
 {

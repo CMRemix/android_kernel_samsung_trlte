@@ -80,7 +80,18 @@ int ion_heap_map_user(struct ion_heap *heap, struct ion_buffer *buffer,
 	struct scatterlist *sg;
 	int i;
 	int ret;
-
+#ifdef CONFIG_TIMA_RKP
+        if ((buffer->size) && (boot_mode_security == 1)) {
+        /* iommu optimization- needs to be turned ON from
+         * the tz side.
+         */
+                cpu_v7_tima_iommu_opt(vma->vm_start, vma->vm_end, (unsigned long)vma->vm_mm->pgd);
+                __asm__ __volatile__ (
+                "mcr    p15, 0, r0, c8, c3, 0\n"
+                "dsb\n"
+                "isb\n");
+        }
+#endif
 	for_each_sg(table->sgl, sg, table->nents, i) {
 		struct page *page = sg_page(sg);
 		unsigned long remainder = vma->vm_end - addr;
@@ -344,8 +355,9 @@ struct ion_heap *ion_heap_create(struct ion_platform_heap *heap_data)
 
 	switch (heap_data->type) {
 	case ION_HEAP_TYPE_SYSTEM_CONTIG:
-		heap = ion_system_contig_heap_create(heap_data);
-		break;
+		pr_err("%s: Heap type is disabled: %d\n", __func__,
+		       heap_data->type);
+		return ERR_PTR(-EINVAL);
 	case ION_HEAP_TYPE_SYSTEM:
 		heap = ion_system_heap_create(heap_data);
 		break;
@@ -381,7 +393,8 @@ void ion_heap_destroy(struct ion_heap *heap)
 
 	switch (heap->type) {
 	case ION_HEAP_TYPE_SYSTEM_CONTIG:
-		ion_system_contig_heap_destroy(heap);
+		pr_err("%s: Heap type is disabled: %d\n", __func__,
+		       heap->type);
 		break;
 	case ION_HEAP_TYPE_SYSTEM:
 		ion_system_heap_destroy(heap);

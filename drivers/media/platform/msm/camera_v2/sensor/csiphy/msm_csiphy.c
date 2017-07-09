@@ -1,4 +1,4 @@
-/* Copyright (c) 2011-2014, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2011-2013, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -79,7 +79,7 @@ static int msm_csiphy_lane_config(struct csiphy_device *csiphy_dev,
 			val |= csiphy_params->csid_core;
 		}
 		msm_camera_io_w(val, csiphy_dev->clk_mux_base);
-		CDBG("%s clk mux addr %p val 0x%x\n", __func__,
+		CDBG("%s clk mux addr %pK val 0x%x\n", __func__,
 			csiphy_dev->clk_mux_base, val);
 		mb();
 	}
@@ -132,6 +132,9 @@ static irqreturn_t msm_csiphy_irq(int irq_num, void *data)
 	uint32_t irq;
 	int i;
 	struct csiphy_device *csiphy_dev = data;
+
+	if (!csiphy_dev || !csiphy_dev->base)
+			 return IRQ_HANDLED;
 
 	for (i = 0; i < 8; i++) {
 		irq = msm_camera_io_r(
@@ -386,6 +389,11 @@ static int msm_csiphy_release(struct csiphy_device *csiphy_dev, void *arg)
 		return -EINVAL;
 	}
 
+	CDBG("%s csiphy_params, lane assign %x mask = %x\n",
+		__func__,
+		csi_lane_params->csi_lane_assign,
+		csi_lane_params->csi_lane_mask);
+
 	if (csiphy_dev->hw_version < CSIPHY_VERSION_V30) {
 		csiphy_dev->lane_mask[csiphy_dev->pdev->id] = 0;
 		for (i = 0; i < 4; i++)
@@ -393,7 +401,7 @@ static int msm_csiphy_release(struct csiphy_device *csiphy_dev, void *arg)
 				MIPI_CSIPHY_LNn_CFG2_ADDR + 0x40*i);
 	} else {
 		if (!csi_lane_params) {
-			pr_err("%s:%d failed: csi_lane_params %p\n", __func__,
+			pr_err("%s:%d failed: csi_lane_params %pK\n", __func__,
 				__LINE__, csi_lane_params);
 			return -EINVAL;
 		}
@@ -469,6 +477,11 @@ static int msm_csiphy_release(struct csiphy_device *csiphy_dev, void *arg)
 		return -EINVAL;
 	}
 
+	CDBG("%s csiphy_params, lane assign %x mask = %x\n",
+		__func__,
+		csi_lane_params->csi_lane_assign,
+		csi_lane_params->csi_lane_mask);
+
 	if (csiphy_dev->hw_version < CSIPHY_VERSION_V30) {
 		csiphy_dev->lane_mask[csiphy_dev->pdev->id] = 0;
 		for (i = 0; i < 4; i++)
@@ -476,7 +489,7 @@ static int msm_csiphy_release(struct csiphy_device *csiphy_dev, void *arg)
 				MIPI_CSIPHY_LNn_CFG2_ADDR + 0x40*i);
 	} else {
 		if (!csi_lane_params) {
-			pr_err("%s:%d failed: csi_lane_params %p\n", __func__,
+			pr_err("%s:%d failed: csi_lane_params %pK\n", __func__,
 				__LINE__, csi_lane_params);
 			return -EINVAL;
 		}

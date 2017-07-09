@@ -1,4 +1,4 @@
-/* Copyright (c) 2008-2014, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2008-2016, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -254,27 +254,19 @@ kgsl_mem_entry_destroy(struct kref *kref)
 EXPORT_SYMBOL(kgsl_mem_entry_destroy);
 
 /**
- * kgsl_mem_entry_track_gpuaddr - Insert a mem_entry in the address tree and
- * assign it with a gpu address space before insertion
+ * kgsl_mem_entry_track_gpuaddr - Get the entry gpu address space before
+ * insertion to the process
  * @process: the process that owns the memory
  * @entry: the memory entry
  *
- * @returns - 0 on succcess else error code
+ * @returns - 0 on success else error code
  *
- * Insert the kgsl_mem_entry in to the rb_tree for searching by GPU address.
- * The assignment of gpu address and insertion into list needs to
- * happen with the memory lock held to avoid race conditions between
- * gpu address being selected and some other thread looking through the
- * rb list in search of memory based on gpuaddr
- * This function should be called with processes memory spinlock held
  */
 static int
 kgsl_mem_entry_track_gpuaddr(struct kgsl_process_private *process,
 				struct kgsl_mem_entry *entry)
 {
 	int ret = 0;
-	struct rb_node **node;
-	struct rb_node *parent = NULL;
 	struct kgsl_pagetable *pagetable = process->pagetable;
 	size_t size = entry->memdesc.size;
 
@@ -295,9 +287,20 @@ kgsl_mem_entry_track_gpuaddr(struct kgsl_process_private *process,
 		goto done;
 	}
 	ret = kgsl_mmu_get_gpuaddr(pagetable, &entry->memdesc);
-	if (ret)
-		goto done;
+done:
+	return ret;
+}
 
+static void kgsl_mem_entry_commit_mem_list(struct kgsl_process_private *process,
+				struct kgsl_mem_entry *entry)
+{
+	struct rb_node **node;
+	struct rb_node *parent = NULL;
+
+	if (!entry->memdesc.gpuaddr)
+		return;
+
+	/* Insert mem entry in mem_rb tree */
 	node = &process->mem_rb.rb_node;
 
 	while (*node) {
@@ -314,9 +317,20 @@ kgsl_mem_entry_track_gpuaddr(struct kgsl_process_private *process,
 
 	rb_link_node(&entry->node, parent, node);
 	rb_insert_color(&entry->node, &process->mem_rb);
+}
 
-done:
-	return ret;
+static void kgsl_mem_entry_commit_process(struct kgsl_process_private *process,
+				struct kgsl_mem_entry *entry)
+{
+	if (!entry)
+		return;
+
+	spin_lock(&entry->priv->mem_lock);
+	/* Insert mem entry in mem_rb tree */
+	kgsl_mem_entry_commit_mem_list(process, entry);
+	/* Replace mem entry in mem_idr using id */
+	idr_replace(&entry->priv->mem_idr, entry, entry->id);
+	spin_unlock(&entry->priv->mem_lock);
 }
 
 /**
@@ -364,7 +378,8 @@ kgsl_mem_entry_attach_process(struct kgsl_mem_entry *entry,
 		return -EBADF;
 	idr_preload(GFP_KERNEL);
 	spin_lock(&process->mem_lock);
-	id = idr_alloc(&process->mem_idr, entry, 1, 0, GFP_NOWAIT);
+	/* Allocate the ID but don't attach the pointer just yet */
+	id = idr_alloc(&process->mem_idr, NULL, 1, 0, GFP_NOWAIT);
 	spin_unlock(&process->mem_lock);
 	idr_preload_end();
 
@@ -422,6 +437,33 @@ static void kgsl_mem_entry_detach_process(struct kgsl_mem_entry *entry)
 
 	entry->priv = NULL;
 }
+
+/**
+ * kgsl_context_dump() - dump information about a draw context
+ * @device: KGSL device that owns the context
+ * @context: KGSL context to dump information about
+ *
+ * Dump specific information about the context to the kernel log.  Used for
+ * fence timeout callbacks
+ */
+void kgsl_context_dump(struct kgsl_context *context)
+{
+	struct kgsl_device *device;
+
+	if (_kgsl_context_get(context) == 0)
+		return;
+
+	device = context->device;
+
+	if (kgsl_context_detached(context)) {
+		dev_err(device->dev, "  context[%d]: context detached\n",
+			context->id);
+	} else if (device->ftbl->drawctxt_dump != NULL)
+		device->ftbl->drawctxt_dump(device, context);
+
+	kgsl_context_put(context);
+}
+EXPORT_SYMBOL(kgsl_context_dump);
 
 /**
  * kgsl_context_init() - helper to initialize kgsl_context members
@@ -542,6 +584,11 @@ kgsl_context_destroy(struct kref *kref)
 	struct kgsl_context *context = container_of(kref, struct kgsl_context,
 						    refcount);
 	struct kgsl_device *device = context->device;
+#if defined(CONFIG_FB_MSM_MDSS_FENCE_DBG)
+	xlog_fence((char*)__func__, (char*)device->name, 0,
+		"ctx", context->id,
+		NULL, 0, NULL, 0, NULL, 0, 0);
+#endif
 
 	trace_kgsl_context_destroy(device, context);
 
@@ -1440,7 +1487,6 @@ long kgsl_ioctl_device_waittimestamp_ctxtid(
 out:
 	kgsl_context_put(context);
 	kgsl_mutex_unlock(&device->mutex, &device->mutex_owner);
-
 	return result;
 }
 
@@ -1481,21 +1527,10 @@ struct kgsl_cmdbatch_sync_event {
 	struct kref refcount;
 };
 
-static void _kgsl_cmdbatch_timer(unsigned long data)
+void kgsl_dump_syncpoints(struct kgsl_device *device,
+	struct kgsl_cmdbatch *cmdbatch)
 {
-	struct kgsl_cmdbatch *cmdbatch = (struct kgsl_cmdbatch *) data;
 	struct kgsl_cmdbatch_sync_event *event;
-
-	if (cmdbatch == NULL || cmdbatch->context == NULL)
-		return;
-
-	spin_lock(&cmdbatch->lock);
-	if (list_empty(&cmdbatch->synclist))
-		goto done;
-
-	pr_err("kgsl: possible gpu syncpoint deadlock for context %d timestamp %d\n",
-		cmdbatch->context->id, cmdbatch->timestamp);
-	pr_err(" Active sync points:\n");
 
 	/* Print all the pending sync objects */
 	list_for_each_entry(event, &cmdbatch->synclist, node) {
@@ -1508,19 +1543,44 @@ static void _kgsl_cmdbatch_timer(unsigned long data)
 				event->context, KGSL_TIMESTAMP_RETIRED,
 				&retired);
 
-			pr_err("  [timestamp] context %d timestamp %d (retired %d)\n",
+			dev_err(device->dev,
+				"  [timestamp] context %d timestamp %d (retired %d)\n",
 				event->context->id, event->timestamp,
 				retired);
 			break;
 		}
 		case KGSL_CMD_SYNCPOINT_TYPE_FENCE:
-			pr_err("  fence: [%p] %s\n", event->handle,
-				(event->handle && event->handle->fence)
-					? event->handle->fence->name : "NULL");
+			if (event->handle && event->handle->fence)
+				dev_err(device->dev, "  fence: [%p] %s\n",
+ 					event->handle->fence,
+ 					event->handle->fence->name);
+ 			else
+				dev_err(device->dev, "  fence: invalid\n");
 			break;
 		}
 	}
+}
 
+static void _kgsl_cmdbatch_timer(unsigned long data)
+{
+	struct kgsl_device *device;
+	struct kgsl_cmdbatch *cmdbatch = (struct kgsl_cmdbatch *) data;
+
+	if (cmdbatch == NULL || cmdbatch->context == NULL)
+		return;
+
+	spin_lock(&cmdbatch->lock);
+	if (list_empty(&cmdbatch->synclist))
+		goto done;
+
+	device = cmdbatch->context->device;
+
+	dev_err(device->dev,
+		"kgsl: possible gpu syncpoint deadlock for context %d timestamp %d\n",
+		cmdbatch->context->id, cmdbatch->timestamp);
+	dev_err(device->dev, " Active sync points:\n");
+
+	kgsl_dump_syncpoints(device, cmdbatch);
 done:
 	spin_unlock(&cmdbatch->lock);
 }
@@ -1626,7 +1686,12 @@ static void kgsl_cmdbatch_sync_func(struct kgsl_device *device,
 		struct kgsl_context *context, void *priv, int result)
 {
 	struct kgsl_cmdbatch_sync_event *event = priv;
-
+#if defined(CONFIG_FB_MSM_MDSS_FENCE_DBG)
+	xlog_fence((char*)__func__, "ctx", event->cmdbatch->context->id,
+		"sync_ctx", event->context->id,
+		"ts", event->timestamp,
+		NULL, 0, NULL, 0, 0);
+#endif
 	kgsl_cmdbatch_sync_expire(device, event);
 	kgsl_context_put(event->context);
 	/* Put events that have signaled */
@@ -1704,6 +1769,15 @@ EXPORT_SYMBOL(kgsl_cmdbatch_destroy);
 static void kgsl_cmdbatch_sync_fence_func(void *priv)
 {
 	struct kgsl_cmdbatch_sync_event *event = priv;
+#if defined(CONFIG_FB_MSM_MDSS_FENCE_DBG)
+	char *name="unknown";
+	if(event->handle && event->handle->fence)
+		name = event->handle->fence->name;
+
+	xlog_fence((char*)__func__, "syncpoint_fence_expirectx", event->cmdbatch->context->id,
+		strncat("name=",name,strlen(name)), 0,
+		NULL, 0, NULL, 0, NULL, 0, 0);
+#endif
 
 	kgsl_cmdbatch_sync_expire(event->device, event);
 	/* Put events that have signaled */
@@ -1779,6 +1853,13 @@ static int kgsl_cmdbatch_add_sync_fence(struct kgsl_device *device,
 
 		/* Event no longer needed by this function */
 		kgsl_cmdbatch_sync_event_put(event);
+#if defined(CONFIG_FB_MSM_MDSS_FENCE_DBG)
+		if(ret==0) {
+			xlog_fence((char*)__func__, "fence_expire ctx", cmdbatch->context->id,
+				"signaled", 0,
+				NULL, 0, NULL, 0, NULL, 0, 0);
+		}
+#endif
 
 		return ret;
 	}
@@ -1788,6 +1869,11 @@ static int kgsl_cmdbatch_add_sync_fence(struct kgsl_device *device,
 	 * callback and handle to cancel event has been set.
 	 */
 	kgsl_cmdbatch_sync_event_put(event);
+#if defined(CONFIG_FB_MSM_MDSS_FENCE_DBG)
+	xlog_fence((char*)__func__, "syncpoint_fence ctx", cmdbatch->context->id,
+		strncat("name=",event->handle->fence->name,strlen(event->handle->fence->name)), 0,
+		NULL, 0, NULL, 0, NULL, 0, 0);
+#endif
 
 	return 0;
 }
@@ -1871,6 +1957,13 @@ static int kgsl_cmdbatch_add_sync_timestamp(struct kgsl_device *device,
 		kgsl_cmdbatch_put(cmdbatch);
 		kfree(event);
 	}
+#if defined(CONFIG_FB_MSM_MDSS_FENCE_DBG)
+	else {
+		xlog_fence((char*)__func__, "ctx", cmdbatch->context->id,
+			"sync ctx", event->context->id,
+			"ts", event->timestamp, NULL, 0, NULL, 0, 0);
+	}
+#endif
 
 done:
 	if (ret)
@@ -2339,6 +2432,10 @@ long kgsl_ioctl_drawctxt_create(struct kgsl_device_private *dev_priv,
 		result = PTR_ERR(context);
 		goto done;
 	}
+#if defined(CONFIG_FB_MSM_MDSS_FENCE_DBG)
+	xlog_fence((char*)__func__, "ctx", context->id,
+		"flags", param->flags, NULL, 0, NULL, 0, NULL, 0, 0);
+#endif
 	trace_kgsl_context_create(dev_priv->device, context, param->flags);
 	param->drawctxt_id = context->id;
 done:
@@ -2549,6 +2646,20 @@ static int kgsl_setup_phys_file(struct kgsl_mem_entry *entry,
 }
 #endif
 
+static int check_vma_flags(struct vm_area_struct *vma,
+		unsigned int flags)
+{
+	unsigned long flags_requested = (VM_READ | VM_WRITE);
+
+	if (flags & KGSL_MEMFLAGS_GPUREADONLY)
+		flags_requested &= ~VM_WRITE;
+
+	if ((vma->vm_flags & flags_requested) == flags_requested)
+		return 0;
+
+	return -EFAULT;
+}
+
 static int check_vma(struct vm_area_struct *vma, struct file *vmfile,
 		struct kgsl_memdesc *memdesc)
 {
@@ -2562,7 +2673,7 @@ static int check_vma(struct vm_area_struct *vma, struct file *vmfile,
 	if (vma->vm_start != memdesc->useraddr ||
 		(memdesc->useraddr + memdesc->size) != vma->vm_end)
 		return -EINVAL;
-	return 0;
+	return check_vma_flags(vma, memdesc->flags);
 }
 
 static int memdesc_sg_virt(struct kgsl_memdesc *memdesc, struct file *vmfile)
@@ -2571,7 +2682,7 @@ static int memdesc_sg_virt(struct kgsl_memdesc *memdesc, struct file *vmfile)
 	long npages = 0;
 	unsigned long sglen = memdesc->size / PAGE_SIZE;
 	struct page **pages = NULL;
-	int write = (memdesc->flags & KGSL_MEMFLAGS_GPUREADONLY) != 0;
+	int write = ((memdesc->flags & KGSL_MEMFLAGS_GPUREADONLY) ? 0 : 1);
 
 	pages = kgsl_malloc(sglen * sizeof(struct page *));
 	if (pages == NULL)
@@ -2654,6 +2765,7 @@ static int kgsl_setup_useraddr(struct kgsl_mem_entry *entry,
 	struct kgsl_map_user_mem *param = data;
 	struct dma_buf *dmabuf = NULL;
 	struct vm_area_struct *vma = NULL;
+	int ret;
 
 	if (param->offset != 0 || param->hostptr == 0
 		|| !KGSL_IS_PAGE_ALIGNED(param->hostptr)
@@ -2669,6 +2781,12 @@ static int kgsl_setup_useraddr(struct kgsl_mem_entry *entry,
 
 	if (vma && vma->vm_file) {
 		int fd;
+
+		ret = check_vma_flags(vma, entry->memdesc.flags);
+		if (ret) {
+			up_read(&current->mm->mmap_sem);
+			return ret;
+		}
 
 		/*
 		 * Check to see that this isn't our own memory that we have
@@ -2973,6 +3091,7 @@ long kgsl_ioctl_map_user_mem(struct kgsl_device_private *dev_priv,
 
 	trace_kgsl_mem_map(entry, param->fd);
 
+	kgsl_mem_entry_commit_process(private, entry);
 	return result;
 
 error_attach:
@@ -3295,6 +3414,7 @@ long kgsl_ioctl_gpumem_alloc(struct kgsl_device_private *dev_priv,
 	param->gpuaddr = entry->memdesc.gpuaddr;
 	param->size = entry->memdesc.size;
 	param->flags = entry->memdesc.flags;
+	kgsl_mem_entry_commit_process(private, entry);
 	return result;
 err:
 	kgsl_sharedmem_free(&entry->memdesc);
@@ -3332,6 +3452,8 @@ long kgsl_ioctl_gpumem_alloc_id(struct kgsl_device_private *dev_priv,
 	param->size = entry->memdesc.size;
 	param->mmapsize = kgsl_memdesc_mmapsize(&entry->memdesc);
 	param->gpuaddr = entry->memdesc.gpuaddr;
+
+	kgsl_mem_entry_commit_process(private, entry);
 	return result;
 err:
 	if (entry)
@@ -3850,6 +3972,11 @@ static int kgsl_check_gpu_addr_collision(
 			spin_lock(&private->mem_lock);
 			kgsl_mem_entry_untrack_gpuaddr(private, entry);
 			spin_unlock(&private->mem_lock);
+		} else {
+			/* Insert mem entry in mem_rb tree */
+			spin_lock(&private->mem_lock);
+			kgsl_mem_entry_commit_mem_list(private, entry);
+			spin_unlock(&private->mem_lock);
 		}
 	} else {
 		trace_kgsl_mem_unmapped_area_collision(entry, addr, len,
@@ -4105,6 +4232,18 @@ static int kgsl_mmap(struct file *file, struct vm_area_struct *vma)
 
 	vma->vm_private_data = entry;
 
+#ifdef CONFIG_TIMA_RKP
+	if ((vma->vm_end - vma->vm_start) && (boot_mode_security == 1)) {
+		/* iommu optimization- needs to be turned ON from
+		* the tz side.
+		*/
+		cpu_v7_tima_iommu_opt(vma->vm_start, vma->vm_end, (unsigned long)vma->vm_mm->pgd);
+		__asm__ __volatile__ (
+		"mcr    p15, 0, r0, c8, c3, 0\n"
+		"dsb\n"
+		"isb\n");
+	}
+#endif
 	/* Determine user-side caching policy */
 
 	cache = kgsl_memdesc_get_cachemode(&entry->memdesc);
@@ -4347,9 +4486,8 @@ int kgsl_device_platform_probe(struct kgsl_device *device)
 	disable_irq(device->pwrctrl.interrupt_num);
 
 	KGSL_DRV_INFO(device,
-		"dev_id %d regs phys 0x%08lx size 0x%08x virt %p\n",
-		device->id, device->reg_phys, device->reg_len,
-		device->reg_virt);
+		"dev_id %d regs phys 0x%08lx size 0x%08x\n",
+		device->id, device->reg_phys, device->reg_len);
 
 	rwlock_init(&device->context_lock);
 

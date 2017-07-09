@@ -564,9 +564,24 @@ static void get_krait_bin_format_b(struct platform_device *pdev,
 	pte_efuse = readl_relaxed(base + 0x4) & BIT(21);
 	if (pte_efuse) {
 		dev_info(&pdev->dev, "PVS bin: %d\n", *pvs);
+#ifdef CONFIG_SEC_LENTIS_PROJECT
+		if (*svs_pvs >= 0)
+		{
+			dev_info(&pdev->dev, "SVS PVS bin: %d\n", *svs_pvs);
+			if (*svs_pvs < *pvs)
+			{
+				dev_info(&pdev->dev, "SVS_PVS(%d) < PVS(%d) , so SPLIT IS APPLIED for this device\n", *svs_pvs, *pvs);
+			}
+			else
+			{
+				dev_info(&pdev->dev, "SVS_PVS(%d) >= PVS(%d) , so SPLIT NOT APPLIED\n", *svs_pvs, *pvs);
+				*svs_pvs = -1;
+			}
+		}
+#else
 		if (*svs_pvs >= 0)
 			dev_info(&pdev->dev, "SVS PVS bin: %d\n", *svs_pvs);
-
+#endif
 	} else {
 		dev_warn(&pdev->dev, "PVS bin not set. Defaulting to 0!\n");
 		*pvs = 0;
@@ -681,9 +696,10 @@ static void krait_update_uv(int *uv, int num, int boost_uv)
 			uv[i] = max(1150000, uv[i]);
 	};
 
-	if (enable_boost) {
-		for (i = 0; i < num; i++)
-			uv[i] += boost_uv;
+	for (i = 0; i < num; i++)
+	{
+		uv[i] += 25000;
+		uv[i] = min(uv[i], 1275000);
 	}
 }
 

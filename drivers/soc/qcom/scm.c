@@ -24,6 +24,13 @@
 
 #include <soc/qcom/scm.h>
 
+#include <linux/thread_info.h>
+#include <linux/sched.h>
+#include <linux/string.h>
+#if defined CONFIG_ARCH_MSM8226 || defined CONFIG_ARCH_APQ8084
+#include <linux/smp.h>
+#endif
+
 #define SCM_ENOMEM		-5
 #define SCM_EOPNOTSUPP		-4
 #define SCM_EINVAL_ADDR		-3
@@ -37,9 +44,18 @@ static DEFINE_MUTEX(scm_lock);
 #define SCM_EBUSY_WAIT_MS 30
 #define SCM_EBUSY_MAX_RETRY 20
 
-#define SCM_BUF_LEN(__cmd_size, __resp_size)	\
-	(sizeof(struct scm_command) + sizeof(struct scm_response) + \
-		__cmd_size + __resp_size)
+
+#define SCM_BUF_LEN(__cmd_size, __resp_size) ({ \
+		size_t x = __cmd_size + __resp_size; \
+		size_t y = sizeof(struct scm_command) + sizeof(struct scm_response); \
+		size_t result; \
+		if (x < __cmd_size || (x + y) < x) \
+			result = 0; \
+		else \
+			result = x + y; \
+		result; \
+		})
+
 /**
  * struct scm_command - one SCM command buffer
  * @len: total available memory for command and response
@@ -186,17 +202,56 @@ static u32 smc(u32 cmd_addr)
 	return r0;
 }
 
+#if defined CONFIG_ARCH_MSM8226 || defined CONFIG_ARCH_APQ8084
+static void __wrap_flush_cache_all(void* vp)
+{
+	flush_cache_all();
+}
+#endif
+
+#ifdef CONFIG_TIMA_LKMAUTH
+pid_t pid_from_lkm = -1;
+#endif
 static int __scm_call(const struct scm_command *cmd)
 {
+	int flush_all_need;
+	int call_from_ss_daemon;
 	int ret;
 	u32 cmd_addr = virt_to_phys(cmd);
 
+	/*
+	 * in case of QSEE command
+	 */
+	flush_all_need = ((cmd->id & 0x0003FC00) == (252 << 10));
+
+	/*
+	 * in case of secure_storage_daemon
+	*/
+	call_from_ss_daemon = (strncmp(current_thread_info()->task->comm, "secure_storage_daemon", TASK_COMM_LEN - 1) == 0);
+
+#ifdef CONFIG_TIMA_LKMAUTH
+	/* we just use the call_from_ss_daemon for simple code */
+	if (pid_from_lkm == current_thread_info()->task->pid) {
+		call_from_ss_daemon = 1;
+		printk(KERN_ERR "scm call by lkmauth\n");
+	}
+#endif
 	/*
 	 * Flush the command buffer so that the secure world sees
 	 * the correct data.
 	 */
 	__cpuc_flush_dcache_area((void *)cmd, cmd->len);
 	outer_flush_range(cmd_addr, cmd_addr + cmd->len);
+
+	if (flush_all_need && call_from_ss_daemon) {
+		flush_cache_all();
+
+#if defined CONFIG_ARCH_MSM8226 || defined CONFIG_ARCH_APQ8084
+		smp_call_function((void (*)(void *))__wrap_flush_cache_all, NULL, 1);
+#endif
+
+		outer_flush_all();
+	}
 
 	ret = smc(cmd_addr);
 	if (ret < 0)
@@ -330,8 +385,7 @@ int scm_call_noalloc(u32 svc_id, u32 cmd_id, const void *cmd_buf,
 	int ret;
 	size_t len = SCM_BUF_LEN(cmd_len, resp_len);
 
-	if (cmd_len > scm_buf_len || resp_len > scm_buf_len ||
-	    len > scm_buf_len)
+	if (len == 0)
 		return -EINVAL;
 
 	if (!IS_ALIGNED((unsigned long)scm_buf, PAGE_SIZE))
@@ -370,7 +424,7 @@ int scm_call(u32 svc_id, u32 cmd_id, const void *cmd_buf, size_t cmd_len,
 	int ret;
 	size_t len = SCM_BUF_LEN(cmd_len, resp_len);
 
-	if (cmd_len > len || resp_len > len)
+	if (len == 0 || PAGE_ALIGN(len) < len)
 		return -EINVAL;
 
 	cmd = kzalloc(PAGE_ALIGN(len), GFP_KERNEL);

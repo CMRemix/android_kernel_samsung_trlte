@@ -31,9 +31,15 @@
 #include <mach/msm_bus.h>
 #include "mdss.h"
 #include "mdss_debug.h"
+#include "mdss_mdp_trace.h"
 #include "mdss_fb.h"
 #include "mdss_mdp.h"
 #include "mdss_mdp_rotator.h"
+
+#if defined(CONFIG_FB_MSM_MDSS_SAMSUNG)
+#include "samsung/ss_dsi_panel_common.h"
+#endif
+
 
 #define VSYNC_PERIOD 16
 #define BORDERFILL_NDX	0x0BF000BF
@@ -630,6 +636,15 @@ int mdss_mdp_overlay_pipe_setup(struct msm_fb_data_type *mfd,
 	if (ret)
 		return ret;
 
+	pipe = mdss_mdp_get_staged_pipe(mdp5_data->ctl, mixer_mux,
+		req->z_order, left_blend_pipe != NULL);
+	if (pipe && pipe->ndx != req->id) {
+		pr_debug("replacing pnum=%d at stage=%d mux=%d id:0x%x %s\n",
+			pipe->num, req->z_order, mixer_mux, req->id,
+			left_blend_pipe ? "right blend" : "left blend");
+		mdss_mdp_mixer_pipe_unstage(pipe, pipe->mixer_left);
+	}
+
 	mixer = mdss_mdp_mixer_get(mdp5_data->ctl, mixer_mux);
 	if (!mixer) {
 		pr_err("unable to get mixer\n");
@@ -746,12 +761,6 @@ int mdss_mdp_overlay_pipe_setup(struct msm_fb_data_type *mfd,
 		pipe->is_right_blend = false;
 	}
 
-	req->priority = pipe->priority;
-	if (!pipe->dirty && !memcmp(req, &pipe->req_data, sizeof(*req))) {
-		pr_debug("skipping pipe_reconfiguration\n");
-		goto skip_reconfigure;
-	}
-
 	pipe->flags = req->flags;
 	if (bwc_enabled  &&  !mdp5_data->mdata->has_bwc) {
 		pr_err("BWC is not supported in MDP version %x\n",
@@ -833,6 +842,10 @@ int mdss_mdp_overlay_pipe_setup(struct msm_fb_data_type *mfd,
 		pipe->overfetch_disable = 0;
 	}
 	pipe->bg_color = req->bg_color;
+
+	req->id = pipe->ndx;
+	req->priority = pipe->priority;
+	pipe->req_data = *req;
 
 	mdss_mdp_pipe_sspp_term(pipe);
 
@@ -925,20 +938,16 @@ int mdss_mdp_overlay_pipe_setup(struct msm_fb_data_type *mfd,
 		goto exit_fail;
 	}
 
-	req->id = pipe->ndx;
+	pipe->params_changed++;
 
 	req->vert_deci = pipe->vert_deci;
 
-	pipe->req_data = *req;
-	pipe->dirty = false;
-
-	pipe->params_changed++;
-skip_reconfigure:
 	*ppipe = pipe;
 
 	mdss_mdp_pipe_unmap(pipe);
 
 	return ret;
+
 exit_fail:
 	mdss_mdp_pipe_unmap(pipe);
 
@@ -955,7 +964,6 @@ exit_fail:
 		pr_debug("freeing allocations for pipe %d\n", pipe->num);
 		mdss_mdp_smp_unreserve(pipe);
 		pipe->params_changed = 0;
-		pipe->dirty = true;
 	}
 	mutex_unlock(&mdp5_data->list_lock);
 	return ret;
@@ -1254,13 +1262,6 @@ static int __overlay_queue_pipes(struct msm_fb_data_type *mfd)
 
 	list_for_each_entry(pipe, &mdp5_data->pipes_used, list) {
 		struct mdss_mdp_data *buf;
-
-		if (pipe->dirty) {
-			pr_err("fb%d: pipe %d dirty! skipping configuration\n",
-					mfd->index, pipe->num);
-			continue;
-		}
-
 		/*
 		 * When secure display is enabled, if there is a non secure
 		 * display pipe, skip that
@@ -1300,8 +1301,12 @@ static int __overlay_queue_pipes(struct msm_fb_data_type *mfd)
 		}
 
 		/* ensure pipes are always reconfigured after power off/on */
-		if (ctl->play_cnt == 0)
+		if (ctl->play_cnt == 0||ctl->roi_changed) {
 			pipe->params_changed++;
+#if defined (CONFIG_FB_MSM_MDSS_DSI_DBG)
+			MDSS_XLOG(__func__,pipe->num, pipe->type, pipe->flags, 0, 0, 0);
+#endif
+		}
 
 		if (pipe->back_buf.num_planes) {
 			buf = &pipe->back_buf;
@@ -1330,7 +1335,6 @@ static int __overlay_queue_pipes(struct msm_fb_data_type *mfd)
 					pipe->num);
 			mdss_mdp_mixer_pipe_unstage(pipe, pipe->mixer_left);
 			mdss_mdp_mixer_pipe_unstage(pipe, pipe->mixer_right);
-			pipe->dirty = true;
 		}
 	}
 
@@ -1348,7 +1352,7 @@ static void __overlay_kickoff_requeue(struct msm_fb_data_type *mfd)
 	__overlay_queue_pipes(mfd);
 	ATRACE_END("sspp_programming");
 
-	mdss_mdp_display_commit(ctl, NULL,  NULL);
+	mdss_mdp_display_commit(ctl, NULL, NULL);
 	mdss_mdp_display_wait4comp(ctl);
 }
 
@@ -1377,7 +1381,6 @@ static int mdss_mdp_commit_cb(enum mdp_commit_stage_type commit_stage,
 
 	return ret;
 }
-
 int mdss_mdp_overlay_kickoff(struct msm_fb_data_type *mfd,
 				struct mdp_display_commit *data)
 {
@@ -1389,6 +1392,9 @@ int mdss_mdp_overlay_kickoff(struct msm_fb_data_type *mfd,
 	int sd_in_pipe = 0;
 	bool need_cleanup = false;
 	struct mdss_mdp_commit_cb commit_cb;
+#if defined(CONFIG_FB_MSM_MIPI_SAMSUNG_OCTA_CMD_FHD_FA2_PT_PANEL)
+	int te_ret = 0;
+#endif
 
 	ATRACE_BEGIN(__func__);
 
@@ -1404,6 +1410,7 @@ int mdss_mdp_overlay_kickoff(struct msm_fb_data_type *mfd,
 	ret = mdss_mdp_overlay_start(mfd);
 	if (ret) {
 		pr_err("unable to start overlay %d (%d)\n", mfd->index, ret);
+		MDSS_XLOG_TOUT_HANDLER("mdp", "dsi0", "dsi1", "panic");
 		goto unlock_exit;
 	}
 
@@ -1415,6 +1422,7 @@ int mdss_mdp_overlay_kickoff(struct msm_fb_data_type *mfd,
 	ret = mdss_iommu_ctrl(1);
 	if (IS_ERR_VALUE(ret)) {
 		pr_err("iommu attach failed rc=%d\n", ret);
+		MDSS_XLOG_TOUT_HANDLER("mdp", "dsi0", "dsi1", "panic");
 		goto unlock_exit;
 	}
 	mutex_lock(&mdp5_data->list_lock);
@@ -1523,6 +1531,25 @@ int mdss_mdp_overlay_kickoff(struct msm_fb_data_type *mfd,
 	}
 
 	mdss_fb_update_notify_update(mfd);
+
+
+#if defined(CONFIG_FB_MSM_MIPI_SAMSUNG_OCTA_CMD_FHD_FA2_PT_PANEL)
+	te_ret = mdss_mdp_ctl_intf_event(mdp5_data->ctl, MDSS_EVENT_TE_UPDATE, NULL);
+	if (te_ret < 0) {
+		mdss_mdp_ctl_intf_event(mdp5_data->ctl, MDSS_EVENT_TE_RESTORE, NULL);
+	}
+#endif
+
+/*
+#if defined(CONFIG_FB_MSM_CMD_MODE_PANEL)
+	mdss_mdp_ctl_intf_event(mdp5_data->ctl, MDSS_EVENT_FRAME_UPDATE, NULL);
+#endif
+*/
+
+#if defined(CONFIG_FB_MSM_MDSS_SAMSUNG)
+	mdss_mdp_ctl_intf_event(mdp5_data->ctl, MDSS_SAMSUNG_EVENT_FRAME_UPDATE, ctl);
+#endif
+
 commit_fail:
 	ATRACE_BEGIN("overlay_cleanup");
 	mdss_mdp_overlay_cleanup(mfd);
@@ -1538,7 +1565,6 @@ unlock_exit:
 	if (ctl->shared_lock)
 		mutex_unlock(ctl->shared_lock);
 	ATRACE_END(__func__);
-
 	return ret;
 }
 
@@ -1601,6 +1627,26 @@ static int mdss_mdp_overlay_unset(struct msm_fb_data_type *mfd, int ndx)
 	if (!mdp5_data || !mdp5_data->ctl)
 		return -ENODEV;
 
+#ifdef CONFIG_SAMSUNG_LPM_MODE
+	/*
+	 * In case of LPM mode, the new lpmapp issues flip commands even after sleep flag is
+	 * set in it. This results in multiple Overlay Commit operations to be triggered
+	 * even after Blanking display.
+	 *
+	 * Because of this behaviour, there were race conditions between FB_BLANK & overlay operation thread
+	 * in kernel, hence resulting in invalid context and causing panics - Null pointer deferences &
+	 * BUG_ON hit.
+	 *
+	 * So to avoid this, this workaround of waiting of active overlay commits is added before proceeding
+	 * with mdp off.
+	 *
+	 * NOTE: Enabling this only for lpm mode of operation, just to be on the safer side.
+	 */
+	if (poweroff_charging) {
+		wait_event(mfd->idle_wait_q,(!atomic_read(&mfd->commits_pending)) );
+	}
+#endif /* CONFIG_SAMSUNG_LPM_MODE */
+
 	ret = mutex_lock_interruptible(&mdp5_data->ov_lock);
 	if (ret)
 		return ret;
@@ -1659,8 +1705,8 @@ static int __mdss_mdp_overlay_release_all(struct msm_fb_data_type *mfd,
 		}
 	}
 
-	if (cnt == 0 && !list_empty(&mdp5_data->pipes_cleanup)) {
-		pr_debug("overlay release on fb%d called without commit!",
+	if (!mfd->ref_cnt && !list_empty(&mdp5_data->pipes_cleanup)) {
+		pr_debug("fb%d:: free pipes present in cleanup list",
 			mfd->index);
 		cnt++;
 	}
@@ -1917,8 +1963,6 @@ static void mdss_mdp_overlay_pan_display(struct msm_fb_data_type *mfd)
 		       offset, fbi->fix.smem_len);
 		goto pan_display_error;
 	}
-
-	mdss_mdp_release_splash_pipe(mfd);
 
 	ret = mdss_mdp_overlay_start(mfd);
 	if (ret) {
@@ -2792,56 +2836,6 @@ static int mdss_fb_get_metadata(struct msm_fb_data_type *mfd,
 	return ret;
 }
 
-static int __mdss_mdp_clean_dirty_pipes(struct msm_fb_data_type *mfd)
-{
-	struct mdss_overlay_private *mdp5_data = mfd_to_mdp5_data(mfd);
-	struct mdss_mdp_pipe *pipe;
-	int unset_ndx = 0;
-
-	mutex_lock(&mdp5_data->list_lock);
-	list_for_each_entry(pipe, &mdp5_data->pipes_used, list) {
-		if (pipe->dirty)
-			unset_ndx |= pipe->ndx;
-	}
-	mutex_unlock(&mdp5_data->list_lock);
-	if (unset_ndx)
-		mdss_mdp_overlay_release(mfd, unset_ndx);
-
-	return unset_ndx;
-}
-
-static int mdss_mdp_overlay_precommit(struct msm_fb_data_type *mfd)
-{
-	struct mdss_overlay_private *mdp5_data;
-	int ret;
-
-	if (!mfd)
-		return -ENODEV;
-
-	mdp5_data = mfd_to_mdp5_data(mfd);
-	if (!mdp5_data)
-		return -ENODEV;
-
-	ret = mutex_lock_interruptible(&mdp5_data->ov_lock);
-	if (ret)
-		return ret;
-
-	/*
-	 * we can assume that any pipes that are still dirty at this point are
-	 * not properly tracked by user land. This could be for any reason,
-	 * mark them for cleanup at this point.
-	 */
-	ret = __mdss_mdp_clean_dirty_pipes(mfd);
-	if (ret) {
-		pr_warn("fb%d: dirty pipes remaining %x\n",
-				mfd->index, ret);
-		ret = -EPIPE;
-	}
-	mutex_unlock(&mdp5_data->ov_lock);
-
-	return ret;
-}
-
 /*
  * This routine serves two purposes.
  * 1. Propagate overlay_id returned from sorted list to original list
@@ -2910,16 +2904,20 @@ static int __mdss_overlay_src_split_sort(struct msm_fb_data_type *mfd,
 		__overlay_swap_func);
 
 	for (i = 0; i < num_ovs; i++) {
+		if (ovs[i].z_order >= MDSS_MDP_MAX_STAGE) {
+			pr_err("invalid stage:%u\n", ovs[i].z_order);
+			return -EINVAL;
+		}
 		if (ovs[i].dst_rect.x < left_lm_w) {
 			if (left_lm_zo_cnt[ovs[i].z_order] == 2) {
-				pr_err("more than 2 ov @ stage%d on left lm\n",
+				pr_err("more than 2 ov @ stage%u on left lm\n",
 					ovs[i].z_order);
 				return -EINVAL;
 			}
 			left_lm_zo_cnt[ovs[i].z_order]++;
 		} else {
 			if (right_lm_zo_cnt[ovs[i].z_order] == 2) {
-				pr_err("more than 2 ov @ stage%d on right lm\n",
+				pr_err("more than 2 ov @ stage%u on right lm\n",
 					ovs[i].z_order);
 				return -EINVAL;
 			}
@@ -3349,9 +3347,14 @@ static int mdss_mdp_overlay_on(struct msm_fb_data_type *mfd)
 		rc = mdss_mdp_ctl_start(mdp5_data->ctl, false);
 		goto panel_on;
 	}
-
+#if defined(CONFIG_FB_MSM_MDSS_SAMSUNG)
+	if (!mfd->panel_info->cont_splash_enabled &&
+		(mfd->panel_info->type != DTV_PANEL) &&
+		!(alpm_status_func(CHECK_PREVIOUS_STATUS))) {
+#else
 	if (!mfd->panel_info->cont_splash_enabled &&
 		(mfd->panel_info->type != DTV_PANEL)) {
+#endif
 		rc = mdss_mdp_overlay_start(mfd);
 		if (rc)
 			goto end;
@@ -3412,6 +3415,26 @@ static int mdss_mdp_overlay_off(struct msm_fb_data_type *mfd)
 		goto ctl_stop;
 	}
 
+#ifdef CONFIG_SAMSUNG_LPM_MODE
+	/*
+	 * In case of LPM mode, the new lpmapp issues flip commands even after sleep flag is
+	 * set in it. This results in multiple Overlay Commit operations to be triggered
+	 * even after Blanking display.
+	 *
+	 * Because of this behaviour, there were race conditions between FB_BLANK & overlay operation thread
+	 * in kernel, hence resulting in invalid context and causing panics - Null pointer deferences &
+	 * BUG_ON hit.
+	 *
+	 * So to avoid this, this workaround of waiting of active overlay commits is added before proceeding
+	 * with mdp off.
+	 *
+	 * NOTE: Enabling this only for lpm mode of operation, just to be on the safer side.
+	 */
+	if (poweroff_charging) {
+		wait_event(mfd->idle_wait_q,(!atomic_read(&mfd->commits_pending)) );
+	}
+#endif /* CONFIG_SAMSUNG_LPM_MODE */
+
 	mutex_lock(&mdp5_data->ov_lock);
 
 	mdss_mdp_overlay_free_fb_pipe(mfd);
@@ -3430,8 +3453,16 @@ static int mdss_mdp_overlay_off(struct msm_fb_data_type *mfd)
 	mutex_unlock(&mdp5_data->ov_lock);
 
 	if (need_cleanup) {
+#if defined(CONFIG_FB_MSM_MDSS_SAMSUNG)
+		if (alpm_status_func(CHECK_CURRENT_STATUS))
+			pr_info("[ALPM_DEBUG] %s, Skip cleanup pipes on fb%d\n",
+					__func__, mfd->index);
+		else
+#endif
+	{
 		pr_debug("cleaning up pipes on fb%d\n", mfd->index);
 		mdss_mdp_overlay_kickoff(mfd, NULL);
+	}
 	}
 
 	/*
@@ -3763,7 +3794,6 @@ int mdss_mdp_overlay_init(struct msm_fb_data_type *mfd)
 	mdp5_interface->ioctl_handler = mdss_mdp_overlay_ioctl_handler;
 	mdp5_interface->panel_register_done = mdss_panel_register_done;
 	mdp5_interface->kickoff_fnc = mdss_mdp_overlay_kickoff;
-	mdp5_interface->pre_commit_fnc = mdss_mdp_overlay_precommit;
 	mdp5_interface->get_sync_fnc = mdss_mdp_rotator_sync_pt_get;
 	mdp5_interface->splash_init_fnc = mdss_mdp_splash_init;
 

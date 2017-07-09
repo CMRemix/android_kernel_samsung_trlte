@@ -1,4 +1,4 @@
-/* Copyright (c) 2012-2014, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2012-2016, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -35,7 +35,7 @@
 
 struct msm_vidc_drv *vidc_driver;
 
-uint32_t msm_vidc_pwr_collapse_delay = 2000;
+uint32_t msm_vidc_pwr_collapse_delay = 10000; // changed from 2000 to 10000 (10 sec)
 
 static inline struct msm_vidc_inst *get_vidc_inst(struct file *filp, void *fh)
 {
@@ -286,7 +286,7 @@ static int read_platform_resources(struct msm_vidc_core *core,
 		struct platform_device *pdev)
 {
 	if (!core || !pdev) {
-		dprintk(VIDC_ERR, "%s: Invalid params %p %p\n",
+		dprintk(VIDC_ERR, "%s: Invalid params %pK %pK\n",
 			__func__, core, pdev);
 		return -EINVAL;
 	}
@@ -519,7 +519,7 @@ static int msm_vidc_remove(struct platform_device *pdev)
 	struct msm_vidc_core *core;
 
 	if (!pdev) {
-		dprintk(VIDC_ERR, "%s invalid input %p", __func__, pdev);
+		dprintk(VIDC_ERR, "%s invalid input %pK", __func__, pdev);
 		return -EINVAL;
 	}
 	core = pdev->dev.platform_data;

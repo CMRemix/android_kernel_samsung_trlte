@@ -1,4 +1,4 @@
-/* Copyright (c) 2011-2014, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2011-2016, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -641,7 +641,10 @@ static int kgsl_iommu_pt_equal(struct kgsl_mmu *mmu,
 static void kgsl_iommu_destroy_pagetable(struct kgsl_pagetable *pt)
 {
 	struct kgsl_iommu_pt *iommu_pt = pt->priv;
-	phys_addr_t domain_ptbase = iommu_get_pt_base_addr(iommu_pt->domain);
+	phys_addr_t domain_ptbase;
+
+	if (iommu_pt->domain)
+		domain_ptbase = iommu_get_pt_base_addr(iommu_pt->domain);
 
 	if (iommu_pt->domain)
 		msm_unregister_domain(iommu_pt->domain);
@@ -733,8 +736,8 @@ static void kgsl_detach_pagetable_iommu_domain(struct kgsl_mmu *mmu)
 				iommu_detach_device(iommu_pt->domain,
 						iommu_unit->dev[j].dev);
 				iommu_unit->dev[j].attached = false;
-				KGSL_MEM_INFO(mmu->device, "iommu %p detached "
-					"from user dev of MMU: %p\n",
+				KGSL_MEM_INFO(mmu->device, "iommu %pK detached "
+					"from user dev of MMU: %pK\n",
 					iommu_pt->domain, mmu);
 			}
 		}
@@ -787,7 +790,7 @@ static int kgsl_attach_pagetable_iommu_domain(struct kgsl_mmu *mmu)
 				}
 				iommu_unit->dev[j].attached = true;
 				KGSL_MEM_INFO(mmu->device,
-				"iommu pt %p attached to dev %p, ctx_id %d\n",
+				"iommu pt %pK attached to dev %pK, ctx_id %d\n",
 				iommu_pt->domain, iommu_unit->dev[j].dev,
 				iommu_unit->dev[j].ctx_id);
 				/* Init IOMMU unit clks here */
@@ -1930,7 +1933,7 @@ static int kgsl_iommu_default_setstate(struct kgsl_mmu *mmu,
 					(KGSL_IOMMU_CTX_TLBSTATUS_SACTIVE)) {
 					if (time_after(jiffies,
 						wait_for_flush)) {
-						KGSL_DRV_ERR(mmu->device,
+						KGSL_DRV_WARN(mmu->device,
 						"Wait limit reached for IOMMU tlb flush\n");
 						break;
 					}
